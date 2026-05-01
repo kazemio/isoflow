@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronRight, Eye, RotateCcw, Target } from "lucide-react";
 
 const NOTES = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"];
@@ -92,6 +92,7 @@ function buildGrid(rows = 8, cols = 17) {
         id: `${visualRow}-${col}`,
         row: visualRow,
         col,
+        pitchClass,
         note: normalizeNote(pitchClass)
       });
     }
@@ -103,6 +104,22 @@ function buildGrid(rows = 8, cols = 17) {
 }
 
 const GRID = buildGrid();
+const DEFAULT_MIDI_ANCHOR_NOTE = 60; // Middle C
+
+function defaultAnchorCellId() {
+  // Grid pitchClass values span roughly 0..51; 24 is a C near the center.
+  const preferredPitch = 24;
+  const all = GRID.flat();
+  const exact = all.find((c) => c.pitchClass === preferredPitch && c.note === "C");
+  if (exact) return exact.id;
+
+  const cCells = all.filter((c) => c.note === "C");
+  if (cCells.length === 0) return all[0]?.id ?? "0-0";
+
+  return cCells
+    .map((cell) => ({ cell, d: Math.abs(cell.pitchClass - preferredPitch) }))
+    .sort((a, b) => a.d - b.d)[0].cell.id;
+}
 
 function parseProgression(text, chords) {
   const tokens = text
@@ -210,6 +227,15 @@ function App() {
   const [pendingDestination, setPendingDestination] = useState(null);
   const [transitionSummary, setTransitionSummary] = useState(null);
 
+  const midiSupported = typeof navigator !== "undefined" && typeof navigator.requestMIDIAccess === "function";
+  const [midiStatus, setMidiStatus] = useState(midiSupported ? "disconnected" : "unsupported");
+  const [midiInputs, setMidiInputs] = useState([]);
+  const [selectedMidiInputId, setSelectedMidiInputId] = useState("");
+  const lastMidiCellRef = useRef(null);
+  const midiAccessRef = useRef(null);
+  const midiHandlerRef = useRef(null);
+  const midiPressedRef = useRef({});
+
   const chords = useMemo(() => buildChordsForKey(keyCenter), [keyCenter]);
 
   const progression = useMemo(() => {
@@ -288,6 +314,156 @@ function App() {
       return [...current, cell];
     });
   }
+
+  function selectCell(cell, options = {}) {
+    if (!selectableCellsForStage(cell)) return;
+    setFeedback(null);
+
+    setActiveSelection((current) => {
+      const exists = current.some((item) => item.id === cell.id);
+      if (exists) return current;
+      if (!options.ignoreMax && current.length >= maxSelectionsForStage()) return current;
+      return [...current, cell];
+    });
+  }
+
+  function deselectCell(cell) {
+    setFeedback(null);
+    setActiveSelection((current) => current.filter((item) => item.id !== cell.id));
+  }
+
+  function pickCellForPitchClass(pitchClass) {
+    const candidates = GRID.flat().filter((c) => c.pitchClass % 12 === pitchClass);
+    if (candidates.length === 0) return null;
+
+    const current = activeSelection();
+    const isSelected = (cell) => current.some((item) => item.id === cell.id);
+
+    const last = lastMidiCellRef.current;
+    const scored = candidates
+      .filter((cell) => selectableCellsForStage(cell))
+      .map((cell) => ({
+        cell,
+        score:
+          (isSelected(cell) ? 9999 : 0) +
+          (last ? distance(last, cell) : 0)
+      }))
+      .sort((a, b) => a.score - b.score);
+
+    return scored[0]?.cell ?? null;
+  }
+
+  function resolveMidiCell(noteNumber) {
+    const anchorPitch = GRID.flat().find((c) => c.id === defaultAnchorCellId())?.pitchClass ?? 24;
+
+    const delta = noteNumber - DEFAULT_MIDI_ANCHOR_NOTE;
+    const targetPitch = anchorPitch + delta;
+    const byAbsolute = GRID.flat().find((c) => c.pitchClass === targetPitch) || null;
+    if (byAbsolute) return byAbsolute;
+
+    const pitchClass = ((noteNumber % 12) + 12) % 12;
+    return pickCellForPitchClass(pitchClass);
+  }
+
+  function onMidiNoteOn(noteNumber, velocity) {
+    if (velocity <= 0) return; // note-on with velocity 0 is often "note off"
+
+    if (midiPressedRef.current[String(noteNumber)]) return;
+
+    const cell = resolveMidiCell(noteNumber);
+    if (!cell) return;
+
+    midiPressedRef.current[String(noteNumber)] = cell.id;
+    lastMidiCellRef.current = cell;
+    selectCell(cell, { ignoreMax: true });
+  }
+
+  function onMidiNoteOff(noteNumber) {
+    const id = midiPressedRef.current[String(noteNumber)];
+    if (!id) return;
+    delete midiPressedRef.current[String(noteNumber)];
+
+    const cell = GRID.flat().find((c) => c.id === id);
+    if (!cell) return;
+    deselectCell(cell);
+  }
+
+  useEffect(() => {
+    if (!midiSupported) return;
+
+    let cancelled = false;
+
+    async function connect() {
+      try {
+        setMidiStatus("requesting");
+        const access = await navigator.requestMIDIAccess();
+        if (cancelled) return;
+        midiAccessRef.current = access;
+        setMidiStatus("disconnected");
+
+        const refreshInputs = () => {
+          const next = Array.from(access.inputs.values()).map((input) => ({
+            id: input.id,
+            name: input.name || "MIDI input",
+            manufacturer: input.manufacturer || ""
+          }));
+          setMidiInputs(next);
+          setMidiStatus(next.length > 0 ? "connected" : "disconnected");
+          setSelectedMidiInputId((currentId) => {
+            if (currentId && next.some((i) => i.id === currentId)) return currentId;
+            return next[0]?.id ?? "";
+          });
+        };
+
+        refreshInputs();
+        access.onstatechange = refreshInputs;
+      } catch (err) {
+        if (cancelled) return;
+        setMidiStatus("error");
+        setFeedback({
+          type: "bad",
+          title: "MIDI unavailable.",
+          body: err?.message ? String(err.message) : "Could not access MIDI devices."
+        });
+      }
+    }
+
+    connect();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [midiSupported]);
+
+  useEffect(() => {
+    if (midiStatus !== "connected") return;
+    const access = midiAccessRef.current;
+    if (!access) return;
+
+    const input = selectedMidiInputId ? access.inputs.get(selectedMidiInputId) : null;
+    if (!input) return;
+
+    const onMessage = (event) => {
+      const data = event?.data;
+      if (!data || data.length < 3) return;
+      const status = data[0] & 0xf0;
+      const note = data[1];
+      const velocity = data[2];
+      if (status === 0x90) {
+        if (velocity === 0) onMidiNoteOff(note);
+        else onMidiNoteOn(note, velocity);
+      } else if (status === 0x80) {
+        onMidiNoteOff(note);
+      }
+    };
+
+    midiHandlerRef.current = onMessage;
+    input.onmidimessage = onMessage;
+
+    return () => {
+      if (input.onmidimessage === onMessage) input.onmidimessage = null;
+    };
+  }, [midiStatus, selectedMidiInputId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function checkStage() {
     if (stage.key === "START_CHORD") {
@@ -546,6 +722,29 @@ function App() {
             <Eye size={16} />
             Hints
           </button>
+        </div>
+
+        <div className="midi-card">
+          <div className="midi-controls">
+            <label>
+              MIDI
+              <select
+                value={selectedMidiInputId}
+                onChange={(e) => setSelectedMidiInputId(e.target.value)}
+                disabled={midiStatus !== "connected" || midiInputs.length === 0}
+              >
+                {midiInputs.length === 0 ? (
+                  <option value="">No MIDI inputs</option>
+                ) : (
+                  midiInputs.map((input) => (
+                    <option key={input.id} value={input.id}>
+                      {input.manufacturer ? `${input.manufacturer} — ` : ""}{input.name}
+                    </option>
+                  ))
+                )}
+              </select>
+            </label>
+          </div>
         </div>
 
         <div className="flow-strip">

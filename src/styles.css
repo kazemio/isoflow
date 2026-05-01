@@ -397,6 +397,29 @@ button:disabled {
   grid-template-columns: 150px 190px 1fr 150px;
 }
 
+.midi-card {
+  margin: 8px 0 12px;
+  padding: 10px 12px;
+  border-radius: 24px;
+  background: #f4f4f6;
+  border: 1px solid rgba(0, 0, 0, 0.055);
+  display: flex;
+  align-items: center;
+}
+
+.midi-controls {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  width: 100%;
+}
+
+.midi-controls label {
+  min-width: 320px;
+}
+
 .stage-card {
   min-height: 104px;
   padding: 22px;
@@ -486,6 +509,15 @@ button:disabled {
   .arrow {
     transform: rotate(90deg);
     margin: 0 auto;
+  }
+
+  .midi-card {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .midi-controls label {
+    min-width: unset;
   }
 }
 
