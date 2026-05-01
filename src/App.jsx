@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronRight, Eye, RotateCcw, Target } from "lucide-react";
+import { Check, ChevronRight, Eye } from "lucide-react";
 
 const NOTES = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"];
 
@@ -35,22 +35,22 @@ const PROGRESSION_OPTIONS = {
 const STAGES = [
   {
     key: "START_CHORD",
-    title: "1. Build starting chord",
+    title: "Build starting chord",
     instruction: "Select all four notes of the current chord."
   },
   {
     key: "IDENTIFY_GUIDES",
-    title: "2. Identify guide tones",
+    title: "Identify guide tones",
     instruction: "From that voicing, select the 3rd and 7th only."
   },
   {
     key: "MOVE_GUIDES",
-    title: "3. Move guide tones",
+    title: "Move guide tones",
     instruction: "Transform each guide tone into the next chord. A voice may stay put if it is already correct."
   },
   {
     key: "FILL_CHORD",
-    title: "4. Fill destination chord",
+    title: "Fill destination chord",
     instruction: "The guide tones are already part of the chord. Add the remaining two chord tones."
   }
 ];
@@ -239,6 +239,8 @@ function App() {
   const midiAccessRef = useRef(null);
   const midiHandlerRef = useRef(null);
   const midiPressedRef = useRef({});
+  const midiNoteOnRef = useRef(null);
+  const midiNoteOffRef = useRef(null);
   const [midiHeldCells, setMidiHeldCells] = useState([]);
   const [midiArmed, setMidiArmed] = useState(true);
 
@@ -409,6 +411,9 @@ function App() {
     if (cell && !midiPlayMode) deselectCell(cell);
   }
 
+  midiNoteOnRef.current = onMidiNoteOn;
+  midiNoteOffRef.current = onMidiNoteOff;
+
   useEffect(() => {
     if (!midiSupported) return;
 
@@ -471,10 +476,10 @@ function App() {
       const note = data[1];
       const velocity = data[2];
       if (status === 0x90) {
-        if (velocity === 0) onMidiNoteOff(note);
-        else onMidiNoteOn(note, velocity);
+        if (velocity === 0) midiNoteOffRef.current?.(note);
+        else midiNoteOnRef.current?.(note, velocity);
       } else if (status === 0x80) {
-        onMidiNoteOff(note);
+        midiNoteOffRef.current?.(note);
       }
     };
 
@@ -484,7 +489,7 @@ function App() {
     return () => {
       if (input.onmidimessage === onMessage) input.onmidimessage = null;
     };
-  }, [midiStatus, selectedMidiInputId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [midiStatus, selectedMidiInputId]);
 
   useEffect(() => {
     if (!midiPlayMode) return;
@@ -716,7 +721,7 @@ function App() {
     return [
       "cell",
       isMidiHeld ? "midi-held" : "",
-      !midiPlayMode && isSelected ? "selected" : "",
+      isSelected ? "selected" : "",
       hintAnswer ? "guide-hint" : "",
       isStartVoicing && stage.key !== "START_CHORD" ? "ghost" : "",
       isStartGuide ? "source-guide" : "",
@@ -740,10 +745,6 @@ function App() {
             <h1>Voice Leading Trainer</h1>
           </div>
 
-          <button className="ghost-button" onClick={() => resetAll()}>
-            <RotateCcw size={16} />
-            Reset
-          </button>
         </div>
 
         <div className="controls key-controls">
@@ -784,80 +785,65 @@ function App() {
             />
           </label>
 
-          <button
-            className={showHints ? "hint-button active" : "hint-button"}
-            onClick={() => setShowHints((value) => !value)}
-            type="button"
-          >
-            <Eye size={16} />
-            Hints
-          </button>
+          <label>
+            MIDI
+            <select
+              value={selectedMidiInputId}
+              onChange={(e) => setSelectedMidiInputId(e.target.value)}
+              disabled={midiStatus !== "connected" || midiInputs.length === 0}
+            >
+              {midiInputs.length === 0 ? (
+                <option value="">No MIDI inputs</option>
+              ) : (
+                midiInputs.map((input) => (
+                  <option key={input.id} value={input.id}>
+                    {input.manufacturer ? `${input.manufacturer} — ` : ""}{input.name}
+                  </option>
+                ))
+              )}
+            </select>
+          </label>
         </div>
 
-        <div className="midi-card">
-          <div className="midi-controls">
-            <label>
-              MIDI
-              <select
-                value={selectedMidiInputId}
-                onChange={(e) => setSelectedMidiInputId(e.target.value)}
-                disabled={midiStatus !== "connected" || midiInputs.length === 0}
-              >
-                {midiInputs.length === 0 ? (
-                  <option value="">No MIDI inputs</option>
-                ) : (
-                  midiInputs.map((input) => (
-                    <option key={input.id} value={input.id}>
-                      {input.manufacturer ? `${input.manufacturer} — ` : ""}{input.name}
-                    </option>
-                  ))
-                )}
-              </select>
-            </label>
-          </div>
-        </div>
-
-        <div className="flow-strip">
-          {STAGES.map((item, index) => (
-            <div key={item.key} className={index === stageIndex ? "flow-step active" : index < stageIndex ? "flow-step done" : "flow-step"}>
-              {index + 1}
+        <div className={awaitingNextRound ? "info-card success" : "info-card"}>
+          <div className="info-card-stage">
+            <div className="flow-strip">
+              {STAGES.map((item, index) => (
+                <div key={item.key} className={index === stageIndex ? "flow-step active" : index < stageIndex ? "flow-step done" : "flow-step"}>
+                  {index + 1}
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
-
-        <div className={awaitingNextRound ? "stage-card success" : "stage-card"}>
-          <p className="eyebrow">{keyCenter} major · {fromSymbol} → {toSymbol}</p>
-          <h2>{awaitingNextRound ? "Transition complete" : stage.title}</h2>
-          <div className="stage-content">
-  {!awaitingNextRound && (
-    <p className="instruction">{stage.instruction}</p>
-  )}
-
-  {awaitingNextRound && transitionSummary && (
-    <div className="transition-summary">
-      <strong>{transitionSummary.title}</strong>
-      <span>{transitionSummary.body}</span>
-      <em>{transitionSummary.next}</em>
-    </div>
-  )}
-</div>
-        </div>
-
-        <div className="chord-compare-card">
-          <div className="chord-block">
-            <p className="eyebrow">Source</p>
-            <h3>{fromSymbol}</h3>
-            <div className="chord-name">{getChordName(fromSymbol, fromChord.tones)}</div>
-            <div className="chord-tones">{fromChord.tones.join(" · ")}</div>
+            <p className="eyebrow">{keyCenter} major · {fromSymbol} → {toSymbol}</p>
+            <h2>{awaitingNextRound ? "Transition complete" : stage.title}</h2>
+            {!awaitingNextRound && (
+              <p className="instruction">{stage.instruction}</p>
+            )}
+            {awaitingNextRound && transitionSummary && (
+              <div className="transition-summary">
+                <strong>{transitionSummary.title}</strong>
+                <span>{transitionSummary.body}</span>
+                <em>{transitionSummary.next}</em>
+              </div>
+            )}
           </div>
 
-          <div className="arrow">→</div>
+          <div className="info-card-chords">
+            <div className="chord-block">
+              <p className="eyebrow">Source</p>
+              <h3>{fromSymbol}</h3>
+              <div className="chord-name">{getChordName(fromSymbol, fromChord.tones)}</div>
+              <div className="chord-tones">{fromChord.tones.join(" · ")}</div>
+            </div>
 
-          <div className="chord-block">
-            <p className="eyebrow">Destination</p>
-            <h3>{toSymbol}</h3>
-            <div className="chord-name">{getChordName(toSymbol, toChord.tones)}</div>
-            <div className="chord-tones">{toChord.tones.join(" · ")}</div>
+            <div className="arrow">→</div>
+
+            <div className="chord-block">
+              <p className="eyebrow">Destination</p>
+              <h3>{toSymbol}</h3>
+              <div className="chord-name">{getChordName(toSymbol, toChord.tones)}</div>
+              <div className="chord-tones">{toChord.tones.join(" · ")}</div>
+            </div>
           </div>
         </div>
 
@@ -867,7 +853,7 @@ function App() {
               <button
                 key={cell.id}
                 className={cellClass(cell)}
-                onClick={midiPlayMode ? undefined : () => toggleCell(cell)}
+                onClick={() => toggleCell(cell)}
                 title={`${cell.note} — row ${cell.row + 1}, col ${cell.col + 1}`}
               >
                 {cell.note}
@@ -877,9 +863,20 @@ function App() {
         </div>
 
         <div className="action-row">
-          <div className="selection-readout">
-            <span>{stage.key === "FILL_CHORD" ? "Chord so far" : "Selected"}</span>
-            <strong>{selectionText}</strong>
+          <div className="selection-group">
+            <div className="selection-readout">
+              <span>{stage.key === "FILL_CHORD" ? "Chord so far" : "Selected"}</span>
+              <strong>{selectionText}</strong>
+            </div>
+
+            <button
+              className={showHints ? "hint-button active" : "hint-button"}
+              onClick={() => setShowHints((value) => !value)}
+              type="button"
+            >
+              <Eye size={16} />
+              Hints
+            </button>
           </div>
 
           <button className="primary-button" disabled={!canAdvance} onClick={advance}>
@@ -896,23 +893,6 @@ function App() {
             )}
           </button>
 
-          <button className="secondary-button" disabled={awaitingNextRound} onClick={clearCurrentStage}>
-            Clear
-          </button>
-
-          <button className="secondary-button" disabled={awaitingNextRound} onClick={() => {
-            setPairIndex((value) => (value + 1) % progression.length);
-            setStageIndex(0);
-            setStartVoicing([]);
-            setStartGuides([]);
-            setMovedGuides([]);
-            setSelected([]);
-            setFeedback(null);
-            setTransitionSummary(null);
-          }}>
-            Skip
-            <ChevronRight size={17} />
-          </button>
         </div>
 
         {feedback && (
@@ -922,10 +902,7 @@ function App() {
           </div>
         )}
 
-        <div className="hint">
-          <Target size={15} />
-          Hints are off by default. When enabled, orange outlines show the correct answer for the current step.
-        </div>
+
       </section>
     </main>
   );
