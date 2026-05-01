@@ -121,6 +121,10 @@ function defaultAnchorCellId() {
     .sort((a, b) => a.d - b.d)[0].cell.id;
 }
 
+function uniqueNotesFromCells(cells) {
+  return [...new Set(cells.map((c) => c.note))];
+}
+
 function parseProgression(text, chords) {
   const tokens = text
     .replaceAll("–", " ")
@@ -235,6 +239,10 @@ function App() {
   const midiAccessRef = useRef(null);
   const midiHandlerRef = useRef(null);
   const midiPressedRef = useRef({});
+  const [midiHeldCells, setMidiHeldCells] = useState([]);
+  const [midiArmed, setMidiArmed] = useState(true);
+
+  const midiPlayMode = Boolean(selectedMidiInputId);
 
   const chords = useMemo(() => buildChordsForKey(keyCenter), [keyCenter]);
 
@@ -365,6 +373,14 @@ function App() {
     return pickCellForPitchClass(pitchClass);
   }
 
+  function refreshMidiHeldCells() {
+    const ids = Object.values(midiPressedRef.current || {});
+    const next = ids
+      .map((id) => GRID.flat().find((c) => c.id === id))
+      .filter(Boolean);
+    setMidiHeldCells(next);
+  }
+
   function onMidiNoteOn(noteNumber, velocity) {
     if (velocity <= 0) return; // note-on with velocity 0 is often "note off"
 
@@ -375,7 +391,11 @@ function App() {
 
     midiPressedRef.current[String(noteNumber)] = cell.id;
     lastMidiCellRef.current = cell;
-    selectCell(cell, { ignoreMax: true });
+    refreshMidiHeldCells();
+
+    if (!midiPlayMode) {
+      selectCell(cell, { ignoreMax: true });
+    }
   }
 
   function onMidiNoteOff(noteNumber) {
@@ -383,9 +403,10 @@ function App() {
     if (!id) return;
     delete midiPressedRef.current[String(noteNumber)];
 
+    refreshMidiHeldCells();
+
     const cell = GRID.flat().find((c) => c.id === id);
-    if (!cell) return;
-    deselectCell(cell);
+    if (cell && !midiPlayMode) deselectCell(cell);
   }
 
   useEffect(() => {
@@ -464,6 +485,53 @@ function App() {
       if (input.onmidimessage === onMessage) input.onmidimessage = null;
     };
   }, [midiStatus, selectedMidiInputId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    if (!midiPlayMode) return;
+
+    if (midiHeldCells.length === 0) {
+      setMidiArmed(true);
+      setFeedback(null);
+      return;
+    }
+
+    const heldNotes = uniqueNotesFromCells(midiHeldCells);
+    if (heldNotes.length !== 4) {
+      setFeedback(null);
+      return;
+    }
+
+    const ok = heldNotes.slice().sort().join(",") === toChord.tones.slice().sort().join(",");
+    if (!ok) {
+      setFeedback({
+        type: "bad",
+        title: "Not the destination chord.",
+        body: `Expected ${toSymbol} in ${keyCenter}: ${toChord.tones.join(" · ")}`
+      });
+      return;
+    }
+
+    setFeedback({
+      type: "good",
+      title: "Correct.",
+      body: `${fromSymbol} → ${toSymbol} in ${keyCenter}`
+    });
+
+    if (!midiArmed) return;
+    setMidiArmed(false);
+
+    setTimeout(() => {
+      setPairIndex((value) => (value + 1) % progression.length);
+      setStageIndex(0);
+      setStartVoicing([]);
+      setStartGuides([]);
+      setMovedGuides([]);
+      setSelected([]);
+      setTransitionSummary(null);
+      setAwaitingNextRound(false);
+      setPendingDestination(null);
+    }, 250);
+  }, [midiPlayMode, midiHeldCells, midiArmed, toChord, toSymbol, fromSymbol, keyCenter, progression.length]);
 
   function checkStage() {
     if (stage.key === "START_CHORD") {
@@ -619,6 +687,7 @@ function App() {
     const isStartGuide = startGuides.some((c) => c.id === cell.id);
     const isMovedGuide = movedGuides.some((c) => c.id === cell.id);
     const isFinalLockedGuide = stage.key === "FILL_CHORD" && isMovedGuide;
+    const isMidiHeld = midiHeldCells.some((c) => c.id === cell.id);
 
     // Hints now mean: outline the correct answer for the current step.
     // Stage 1: any cell whose pitch is in the source chord.
@@ -646,7 +715,8 @@ function App() {
 
     return [
       "cell",
-      isSelected ? "selected" : "",
+      isMidiHeld ? "midi-held" : "",
+      !midiPlayMode && isSelected ? "selected" : "",
       hintAnswer ? "guide-hint" : "",
       isStartVoicing && stage.key !== "START_CHORD" ? "ghost" : "",
       isStartGuide ? "source-guide" : "",
@@ -797,7 +867,7 @@ function App() {
               <button
                 key={cell.id}
                 className={cellClass(cell)}
-                onClick={() => toggleCell(cell)}
+                onClick={midiPlayMode ? undefined : () => toggleCell(cell)}
                 title={`${cell.note} — row ${cell.row + 1}, col ${cell.col + 1}`}
               >
                 {cell.note}
