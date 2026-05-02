@@ -40,11 +40,6 @@ button {
 
 .panel {
   width: min(1180px, 100%);
-  border: 1px solid rgba(0, 0, 0, 0.075);
-  border-radius: 34px;
-  background: rgba(255, 255, 255, 0.84);
-  box-shadow: 0 30px 90px rgba(0, 0, 0, 0.09);
-  backdrop-filter: blur(24px);
   padding: 28px;
 }
 
@@ -376,7 +371,6 @@ button:disabled {
 
   .panel {
     padding: 18px;
-    border-radius: 24px;
   }
 
   .controls {
