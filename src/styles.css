@@ -585,29 +585,44 @@ button:disabled {
   }
 
   .info-card-chords {
-    grid-template-columns: 1fr;
+    padding: 8px;
+    gap: 6px;
+  }
+
+  .cell {
+    width: 36px;
+    height: 36px;
+    border-radius: 10px;
   }
 
   .chord-block {
     text-align: center;
+    padding: 8px 6px;
   }
 
   .chord-block-body {
     justify-content: center;
+    gap: 6px;
   }
 
-  .chord-name {
-    margin-bottom: 0;
-    line-height: 1;
+  .chord-block h3 {
+    font-size: 20px;
   }
 
   .chord-block .chord-tones {
-    line-height: 1;
+    letter-spacing: normal;
+  }
+
+  .chord-block-body > div {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
   }
 
   .arrow {
-    transform: rotate(90deg);
-    margin: 0 auto;
+    width: 32px;
+    height: 32px;
+    font-size: 16px;
   }
 }
 

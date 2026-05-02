@@ -103,7 +103,6 @@ function buildGrid(rows = 6, cols = 12, startNote = 6) {
   return grid;
 }
 
-const GRID = buildGrid();
 
 // MIDI note sent by the bottom-left pad of the LinnStrument 200 (default: 30 = F#/Gb).
 // Change if you have customised the Global Low Row Note in the LinnStrument settings.
@@ -198,8 +197,8 @@ function bestMapping(fromCells, toCells) {
   return best;
 }
 
-function generateGuideCandidates(startGuides, toGuideNotes) {
-  const allCells = GRID.flat();
+function generateGuideCandidates(startGuides, toGuideNotes, grid) {
+  const allCells = grid.flat();
   const candidatesByNote = toGuideNotes.map((note) => allCells.filter((cell) => cell.note === note));
   const out = [];
 
@@ -227,6 +226,21 @@ function generateGuideCandidates(startGuides, toGuideNotes) {
 }
 
 function App() {
+  const [isMobile, setIsMobile] = useState(
+    typeof window !== "undefined" && window.innerWidth < 900
+  );
+
+  useEffect(() => {
+    const handler = () => setIsMobile(window.innerWidth < 900);
+    window.addEventListener("resize", handler);
+    return () => window.removeEventListener("resize", handler);
+  }, []);
+
+  const GRID = useMemo(
+    () => isMobile ? buildGrid(8, 8, 6) : buildGrid(8, 16, 6),
+    [isMobile]
+  );
+
   const [keyCenter, setKeyCenter] = useState("C");
   const [customText, setCustomText] = useState("ii V I");
 
@@ -275,6 +289,19 @@ function App() {
     stage.key === "IDENTIFY_GUIDES"
       ? fromChord.guide
       : toChord.guide;
+
+  useEffect(() => {
+    setPairIndex(0);
+    setStageIndex(0);
+    setStartVoicing([]);
+    setStartGuides([]);
+    setMovedGuides([]);
+    setSelected([]);
+    setFeedback(null);
+    setAwaitingNextRound(false);
+    setPendingDestination(null);
+    setTransitionSummary(null);
+  }, [isMobile]);
 
   function resetAll(nextKey = keyCenter) {
     setKeyCenter(nextKey);
@@ -542,7 +569,7 @@ function App() {
       const correctNotes = samePitchSet(movedGuides, toChord.guide);
       const mapping = startGuides.length === 2 && movedGuides.length === 2 ? bestMapping(startGuides, movedGuides) : null;
 
-      const guideCandidates = generateGuideCandidates(startGuides, toChord.guide);
+      const guideCandidates = generateGuideCandidates(startGuides, toChord.guide, GRID);
 
       let optimal = null;
       for (const candidate of guideCandidates) {
@@ -840,7 +867,7 @@ function App() {
         </div>
 
         <div className="grid-wrap">
-          <div className="grid" style={{ gridTemplateColumns: `repeat(${GRID[0].length}, 42px)` }}>
+          <div className="grid" style={{ gridTemplateColumns: `repeat(${GRID[0].length}, ${GRID[0].length <= 8 ? 36 : 42}px)` }}>
             {GRID.flat().map((cell) => (
               <button
                 key={cell.id}
