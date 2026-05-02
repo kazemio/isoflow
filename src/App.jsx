@@ -79,7 +79,7 @@ function buildChordsForKey(key) {
   );
 }
 
-function buildGrid(rows = 8, cols = 25, startNote = 6) {
+function buildGrid(rows = 6, cols = 12, startNote = 6) {
   const grid = [];
 
   for (let visualRow = 0; visualRow < rows; visualRow++) {
@@ -230,7 +230,7 @@ function App() {
   const midiNoteOnRef = useRef(null);
   const midiNoteOffRef = useRef(null);
   const [midiHeldCells, setMidiHeldCells] = useState([]);
-  const [midiArmed, setMidiArmed] = useState(true);
+  const advanceRef = useRef(null);
 
   const midiPlayMode = Boolean(selectedMidiInputId);
 
@@ -396,9 +396,7 @@ function App() {
     lastMidiCellRef.current = cell;
     refreshMidiHeldCells();
 
-    if (!midiPlayMode) {
-      selectCell(cell, { ignoreMax: true });
-    }
+    selectCell(cell, { ignoreMax: true });
   }
 
   function onMidiNoteOff(noteNumber) {
@@ -409,7 +407,7 @@ function App() {
     refreshMidiHeldCells();
 
     const cell = GRID.flat().find((c) => c.id === id);
-    if (cell && !midiPlayMode) deselectCell(cell);
+    if (cell) deselectCell(cell);
   }
 
   midiNoteOnRef.current = onMidiNoteOn;
@@ -492,52 +490,6 @@ function App() {
     };
   }, [midiStatus, selectedMidiInputId]);
 
-  useEffect(() => {
-    if (!midiPlayMode) return;
-
-    if (midiHeldCells.length === 0) {
-      setMidiArmed(true);
-      setFeedback(null);
-      return;
-    }
-
-    const heldNotes = uniqueNotesFromCells(midiHeldCells);
-    if (heldNotes.length !== 4) {
-      setFeedback(null);
-      return;
-    }
-
-    const ok = heldNotes.slice().sort().join(",") === toChord.tones.slice().sort().join(",");
-    if (!ok) {
-      setFeedback({
-        type: "bad",
-        title: "Not the destination chord.",
-        body: `Expected ${toSymbol} in ${keyCenter}: ${toChord.tones.join(" · ")}`
-      });
-      return;
-    }
-
-    setFeedback({
-      type: "good",
-      title: "Correct.",
-      body: `${fromSymbol} → ${toSymbol} in ${keyCenter}`
-    });
-
-    if (!midiArmed) return;
-    setMidiArmed(false);
-
-    setTimeout(() => {
-      setPairIndex((value) => (value + 1) % progression.length);
-      setStageIndex(0);
-      setStartVoicing([]);
-      setStartGuides([]);
-      setMovedGuides([]);
-      setSelected([]);
-      setTransitionSummary(null);
-      setAwaitingNextRound(false);
-      setPendingDestination(null);
-    }, 250);
-  }, [midiPlayMode, midiHeldCells, midiArmed, toChord, toSymbol, fromSymbol, keyCenter, progression.length]);
 
   function checkStage() {
     if (stage.key === "START_CHORD") {
@@ -660,6 +612,8 @@ function App() {
     }
   }
 
+  advanceRef.current = advance;
+
   function startNextRound() {
     const destination = pendingDestination || [...movedGuides, ...selected];
 
@@ -736,6 +690,14 @@ function App() {
   const displaySelection = stage.key === "FILL_CHORD" ? [...movedGuides, ...selected] : currentSelection;
   const selectionText = displaySelection.map((c) => c.note).join(" ") || "—";
   const canAdvance = awaitingNextRound || currentSelection.length === maxSelectionsForStage();
+
+  // In MIDI mode, auto-submit after holding the correct notes for 3 seconds.
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  useEffect(() => {
+    if (!midiPlayMode || !canAdvance) return;
+    const timer = setTimeout(() => advanceRef.current?.(), 3000);
+    return () => clearTimeout(timer);
+  }, [midiPlayMode, canAdvance]);
 
   return (
     <main className="app-shell">
