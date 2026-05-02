@@ -719,12 +719,6 @@ function App() {
   const selectionText = displaySelection.map((c) => c.note).join(" ") || "—";
   const canAdvance = awaitingNextRound || currentSelection.length === maxSelectionsForStage();
 
-  const infoCardClass = [
-    "info-card",
-    awaitingNextRound ? "success" : "",
-    !awaitingNextRound && feedback?.type === "bad" ? "feedback-bad" : "",
-    !awaitingNextRound && (feedback?.type === "good" || feedback?.type === "okay") ? "feedback-good" : "",
-  ].filter(Boolean).join(" ");
 
   // MIDI mode: auto-submit after holding correct notes for 3 seconds.
   // eslint-disable-next-line react-hooks/rules-of-hooks
@@ -755,7 +749,7 @@ function App() {
     <main className="app-shell">
       <section className="panel">
         <div className="controls key-controls">
-          <div className="brand">IsoFlow</div>
+          <div className="brand"><span className="brand-icon">IF</span>IsoFlow</div>
 
           <label>
             Key
@@ -826,8 +820,8 @@ function App() {
           </label>
         </div>
 
-        <div className={infoCardClass}>
-          <div className="info-card-stage">
+        <div className={`step-row${feedback && !awaitingNextRound ? ` step-${feedback.type}` : awaitingNextRound ? " step-good" : ""}`}>
+          <div className="step-line">
             <div className="flow-strip">
               {STAGES.map((item, index) => (
                 <div key={item.key} className={index === stageIndex ? "flow-step active" : index < stageIndex ? "flow-step done" : "flow-step"}>
@@ -835,52 +829,30 @@ function App() {
                 </div>
               ))}
             </div>
-
-            {feedback && !awaitingNextRound ? (
-              <>
-                <h2>{feedback.title}</h2>
-                <p className="instruction">{feedback.body}</p>
-              </>
-            ) : (
-              <>
-                <h2>{awaitingNextRound ? "Transition complete" : stage.title}</h2>
-                {!awaitingNextRound && <p className="instruction">{stage.instruction}</p>}
-                {awaitingNextRound && transitionSummary && (
-                  <p className="instruction">{transitionSummary}</p>
-                )}
-              </>
-            )}
+            <span className="step-text">
+              {feedback && !awaitingNextRound
+                ? feedback.title
+                : awaitingNextRound
+                ? transitionSummary || "Transition complete"
+                : stage.title}
+            </span>
           </div>
-
-          <div className="info-card-chords">
-            <div className="chord-block">
-              <p className="eyebrow">Source</p>
-              <div className="chord-block-body">
-                <h3>{fromSymbol}</h3>
-                <div>
-                  <div className="chord-name">{getChordName(fromSymbol, fromChord.tones)}</div>
-                  <div className="chord-tones">{fromChord.tones.join(" · ")}</div>
-                </div>
-              </div>
-            </div>
-
-            <div className="arrow">→</div>
-
-            <div className="chord-block">
-              <p className="eyebrow">Destination</p>
-              <div className="chord-block-body">
-                <h3>{toSymbol}</h3>
-                <div>
-                  <div className="chord-name">{getChordName(toSymbol, toChord.tones)}</div>
-                  <div className="chord-tones">{toChord.tones.join(" · ")}</div>
-                </div>
-              </div>
-            </div>
+          <div className="chord-line">
+            <span className="chord-unit">
+              <strong>{fromSymbol}</strong>
+              <span className="chord-unit-name">{getChordName(fromSymbol, fromChord.tones)}</span>
+              <span className="chord-unit-notes">{fromChord.tones.join(" · ")}</span>
+            </span>
+            <span className="chord-sep">→</span>
+            <span className="chord-unit">
+              <strong>{toSymbol}</strong>
+              <span className="chord-unit-name">{getChordName(toSymbol, toChord.tones)}</span>
+              <span className="chord-unit-notes">{toChord.tones.join(" · ")}</span>
+            </span>
           </div>
         </div>
 
-        <div className="grid-wrap">
-          <div className="grid" style={{ gridTemplateColumns: `repeat(${GRID[0].length}, ${GRID[0].length <= 8 ? 36 : 42}px)` }}>
+        <div className="grid" style={{ gridTemplateColumns: `repeat(${GRID[0].length}, ${GRID[0].length <= 8 ? 36 : 42}px)` }}>
             {GRID.flat().map((cell) => (
               <button
                 key={cell.id}
@@ -892,7 +864,6 @@ function App() {
               </button>
             ))}
           </div>
-        </div>
 
       </section>
     </main>
