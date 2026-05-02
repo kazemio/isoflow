@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronRight, Eye } from "lucide-react";
+import { Check, ChevronRight, Eye, Shuffle } from "lucide-react";
 
 const NOTES = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"];
 
@@ -127,6 +127,32 @@ function parseProgression(text, chords) {
   return valid.length >= 2 ? valid : null;
 }
 
+function generateRandomProgression() {
+  const transitions = {
+    "I":   [["ii",3],["IV",3],["V",4],["vi",3],["iii",1]],
+    "ii":  [["V",5],["IV",2],["vii",2]],
+    "iii": [["vi",4],["IV",2],["I",1]],
+    "IV":  [["V",4],["ii",3],["I",2],["vii",1]],
+    "V":   [["I",5],["vi",3]],
+    "vi":  [["ii",4],["IV",3],["V",2]],
+    "vii": [["I",5],["iii",2]]
+  };
+  function pick(weighted) {
+    const total = weighted.reduce((s, [, w]) => s + w, 0);
+    let r = Math.random() * total;
+    for (const [v, w] of weighted) { r -= w; if (r <= 0) return v; }
+    return weighted[0][0];
+  }
+  const len = 3 + Math.floor(Math.random() * 8);
+  const result = [pick([["I",3],["vi",2],["ii",2],["IV",1]])];
+  for (let i = 1; i < len; i++) {
+    const opts = transitions[result[result.length - 1]];
+    if (!opts) break;
+    result.push(pick(opts));
+  }
+  return result.join(" ");
+}
+
 function samePitchSet(cells, targetNotes) {
   if (cells.length !== targetNotes.length) return false;
   return cells.map((c) => c.note).sort().join(",") === [...targetNotes].sort().join(",");
@@ -202,9 +228,7 @@ function generateGuideCandidates(startGuides, toGuideNotes) {
 
 function App() {
   const [keyCenter, setKeyCenter] = useState("C");
-  const [progressionName, setProgressionName] = useState("ii–V–I");
   const [customText, setCustomText] = useState("ii V I");
-  const [useCustom, setUseCustom] = useState(false);
 
   const [pairIndex, setPairIndex] = useState(0);
   const [stageIndex, setStageIndex] = useState(0);
@@ -237,9 +261,8 @@ function App() {
   const chords = useMemo(() => buildChordsForKey(keyCenter), [keyCenter]);
 
   const progression = useMemo(() => {
-    if (useCustom) return parseProgression(customText, chords) || PROGRESSION_OPTIONS["ii–V–I"];
-    return PROGRESSION_OPTIONS[progressionName];
-  }, [useCustom, customText, progressionName, chords]);
+    return parseProgression(customText, chords) ?? parseProgression("ii V I", chords);
+  }, [customText, chords]);
 
   const fromSymbol = progression[pairIndex % progression.length];
   const toSymbol = progression[(pairIndex + 1) % progression.length];
@@ -253,10 +276,8 @@ function App() {
       ? fromChord.guide
       : toChord.guide;
 
-  function resetAll(nextPreset = progressionName, custom = useCustom, nextKey = keyCenter) {
+  function resetAll(nextKey = keyCenter) {
     setKeyCenter(nextKey);
-    setProgressionName(nextPreset);
-    setUseCustom(custom);
     setPairIndex(0);
     setStageIndex(0);
     setStartVoicing([]);
@@ -715,7 +736,7 @@ function App() {
             Key
             <select
               value={keyCenter}
-              onChange={(event) => resetAll(progressionName, useCustom, event.target.value)}
+              onChange={(event) => resetAll(event.target.value)}
             >
               {MAJOR_KEYS.map((key) => (
                 <option key={key} value={key}>{key} major</option>
@@ -724,28 +745,28 @@ function App() {
           </label>
 
           <label>
-            Preset
-            <select
-              value={progressionName}
-              onChange={(event) => resetAll(event.target.value, false)}
-            >
-              {Object.keys(PROGRESSION_OPTIONS).map((name) => (
-                <option key={name}>{name}</option>
-              ))}
-            </select>
-          </label>
-
-          <label>
-            Custom progression
-            <input
-              value={customText}
-              onChange={(event) => {
-                setCustomText(event.target.value);
-                setUseCustom(true);
-                resetAll(progressionName, true, keyCenter);
-              }}
-              placeholder="ii V I"
-            />
+            Progression
+            <div className="progression-field">
+              <input
+                list="progression-presets"
+                value={customText}
+                onChange={(e) => { setCustomText(e.target.value); resetAll(); }}
+                placeholder="ii V I"
+              />
+              <datalist id="progression-presets">
+                {Object.entries(PROGRESSION_OPTIONS).map(([name, chords]) => (
+                  <option key={name} value={chords.join(" ")}>{name}</option>
+                ))}
+              </datalist>
+              <button
+                type="button"
+                className="random-button"
+                onClick={() => { const p = generateRandomProgression(); setCustomText(p); resetAll(); }}
+                title="Random progression"
+              >
+                <Shuffle size={15} />
+              </button>
+            </div>
           </label>
 
           <label>
@@ -777,7 +798,7 @@ function App() {
                 </div>
               ))}
             </div>
-            <p className="eyebrow">{keyCenter} major · {fromSymbol} → {toSymbol}</p>
+
             <h2>{awaitingNextRound ? "Transition complete" : stage.title}</h2>
             {!awaitingNextRound && (
               <p className="instruction">{stage.instruction}</p>

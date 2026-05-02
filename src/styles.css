@@ -103,6 +103,14 @@ input {
   outline: none;
 }
 
+select {
+  appearance: none;
+  padding-right: 32px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2374747c' d='M6 8L1 3h10z'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+}
+
 .selection-group {
   display: flex;
   align-items: center;
@@ -135,8 +143,8 @@ input {
 }
 
 .flow-step {
-  width: 26px;
   height: 26px;
+  padding: 0 10px;
   border-radius: 999px;
   display: grid;
   place-items: center;
@@ -413,7 +421,39 @@ button:disabled {
 
 
 .controls.key-controls {
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: 150px 1fr 1fr;
+}
+
+.progression-field {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 7px;
+}
+
+.progression-field input {
+  margin-top: 0;
+  flex: 1;
+  min-width: 0;
+  appearance: none;
+  font: inherit;
+}
+
+.random-button {
+  flex-shrink: 0;
+  width: 42px;
+  height: 42px;
+  border-radius: 14px;
+  display: grid;
+  place-items: center;
+  background: rgba(247, 247, 248, 0.9);
+  border: 1px solid rgba(0, 0, 0, 0.09);
+  cursor: pointer;
+  color: #56565d;
+}
+
+.random-button:hover {
+  background: #e8e8ea;
 }
 
 .info-card {
@@ -436,6 +476,7 @@ button:disabled {
 }
 
 .info-card-stage .flow-strip {
+  justify-content: space-evenly;
   margin-bottom: 4px;
 }
 
@@ -481,11 +522,13 @@ button:disabled {
   border-radius: 16px;
   background: rgba(255, 255, 255, 0.76);
   box-shadow: inset 0 0 0 1px rgba(0,0,0,0.045);
+  text-align: center;
 }
 
 .chord-block-body {
   display: flex;
   align-items: center;
+  justify-content: center;
   gap: 12px;
   margin-top: 6px;
 }
@@ -537,10 +580,29 @@ button:disabled {
 
   .info-card-stage {
     flex: none;
+    align-items: center;
+    text-align: center;
   }
 
   .info-card-chords {
     grid-template-columns: 1fr;
+  }
+
+  .chord-block {
+    text-align: center;
+  }
+
+  .chord-block-body {
+    justify-content: center;
+  }
+
+  .chord-name {
+    margin-bottom: 0;
+    line-height: 1;
+  }
+
+  .chord-block .chord-tones {
+    line-height: 1;
   }
 
   .arrow {
