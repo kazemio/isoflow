@@ -79,7 +79,7 @@ function buildChordsForKey(key) {
   );
 }
 
-function buildGrid(rows = 8, cols = 17) {
+function buildGrid(rows = 8, cols = 25, startNote = 6) {
   const grid = [];
 
   for (let visualRow = 0; visualRow < rows; visualRow++) {
@@ -87,7 +87,7 @@ function buildGrid(rows = 8, cols = 17) {
     const cells = [];
 
     for (let col = 0; col < cols; col++) {
-      const pitchClass = col + rowOffset;
+      const pitchClass = col + rowOffset + startNote;
       cells.push({
         id: `${visualRow}-${col}`,
         row: visualRow,
@@ -104,22 +104,10 @@ function buildGrid(rows = 8, cols = 17) {
 }
 
 const GRID = buildGrid();
-const DEFAULT_MIDI_ANCHOR_NOTE = 60; // Middle C
 
-function defaultAnchorCellId() {
-  // Grid pitchClass values span roughly 0..51; 24 is a C near the center.
-  const preferredPitch = 24;
-  const all = GRID.flat();
-  const exact = all.find((c) => c.pitchClass === preferredPitch && c.note === "C");
-  if (exact) return exact.id;
-
-  const cCells = all.filter((c) => c.note === "C");
-  if (cCells.length === 0) return all[0]?.id ?? "0-0";
-
-  return cCells
-    .map((cell) => ({ cell, d: Math.abs(cell.pitchClass - preferredPitch) }))
-    .sort((a, b) => a.d - b.d)[0].cell.id;
-}
+// MIDI note sent by the bottom-left pad of the LinnStrument 200 (default: 30 = F#/Gb).
+// Change if you have customised the Global Low Row Note in the LinnStrument settings.
+const MIDI_BASE_NOTE = 30;
 
 function uniqueNotesFromCells(cells) {
   return [...new Set(cells.map((c) => c.note))];
@@ -364,13 +352,26 @@ function App() {
   }
 
   function resolveMidiCell(noteNumber) {
-    const anchorPitch = GRID.flat().find((c) => c.id === defaultAnchorCellId())?.pitchClass ?? 24;
+    // Map the controller's note number to the equivalent grid pitchClass.
+    // Both share the same isomorphic layout (+5/row, +1/col) so the offset is constant.
+    const gridBasePitch = GRID[GRID.length - 1][0].pitchClass; // bottom-left cell
+    const targetPitch = noteNumber - MIDI_BASE_NOTE + gridBasePitch;
 
-    const delta = noteNumber - DEFAULT_MIDI_ANCHOR_NOTE;
-    const targetPitch = anchorPitch + delta;
-    const byAbsolute = GRID.flat().find((c) => c.pitchClass === targetPitch) || null;
-    if (byAbsolute) return byAbsolute;
+    const candidates = GRID.flat().filter((c) => c.pitchClass === targetPitch);
 
+    if (candidates.length === 1) return candidates[0];
+
+    if (candidates.length > 1) {
+      // Multiple cells share this pitchClass (overlapping rows) — pick the one
+      // closest to the last played cell so runs of notes stay in the same area.
+      const last = lastMidiCellRef.current;
+      if (!last) return candidates[0];
+      return candidates
+        .map((cell) => ({ cell, d: distance(last, cell) }))
+        .sort((a, b) => a.d - b.d)[0].cell;
+    }
+
+    // Note is outside the grid range — fall back to pitch-class matching.
     const pitchClass = ((noteNumber % 12) + 12) % 12;
     return pickCellForPitchClass(pitchClass);
   }
@@ -831,18 +832,26 @@ function App() {
           <div className="info-card-chords">
             <div className="chord-block">
               <p className="eyebrow">Source</p>
-              <h3>{fromSymbol}</h3>
-              <div className="chord-name">{getChordName(fromSymbol, fromChord.tones)}</div>
-              <div className="chord-tones">{fromChord.tones.join(" · ")}</div>
+              <div className="chord-block-body">
+                <h3>{fromSymbol}</h3>
+                <div>
+                  <div className="chord-name">{getChordName(fromSymbol, fromChord.tones)}</div>
+                  <div className="chord-tones">{fromChord.tones.join(" · ")}</div>
+                </div>
+              </div>
             </div>
 
             <div className="arrow">→</div>
 
             <div className="chord-block">
               <p className="eyebrow">Destination</p>
-              <h3>{toSymbol}</h3>
-              <div className="chord-name">{getChordName(toSymbol, toChord.tones)}</div>
-              <div className="chord-tones">{toChord.tones.join(" · ")}</div>
+              <div className="chord-block-body">
+                <h3>{toSymbol}</h3>
+                <div>
+                  <div className="chord-name">{getChordName(toSymbol, toChord.tones)}</div>
+                  <div className="chord-tones">{toChord.tones.join(" · ")}</div>
+                </div>
+              </div>
             </div>
           </div>
         </div>
@@ -888,7 +897,7 @@ function App() {
             ) : (
               <>
                 <Check size={17} />
-                Check / Continue
+                Submit
               </>
             )}
           </button>
