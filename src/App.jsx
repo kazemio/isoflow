@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronRight, Eye, Shuffle } from "lucide-react";
+import { Dices, Eye } from "lucide-react";
 
 const NOTES = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"];
 
@@ -611,11 +611,7 @@ function App() {
         const completedDestination = combined;
         setPendingDestination(completedDestination);
         setAwaitingNextRound(true);
-        setTransitionSummary({
-          title: "Correct transition",
-          body: `${fromSymbol} → ${toSymbol} in ${keyCenter} complete.`,
-          next: `Next round starts from ${toSymbol} with those notes already selected.`
-        });
+        setTransitionSummary(`Next round starts from ${toSymbol} with those notes selected.`);
         setFeedback(null);
       } else {
         setFeedback({
@@ -631,33 +627,17 @@ function App() {
     return false;
   }
 
+  function advanceStage() {
+    if (stage.key === "START_CHORD")         setStageIndex(1);
+    else if (stage.key === "IDENTIFY_GUIDES") setStageIndex(2);
+    else if (stage.key === "MOVE_GUIDES")    { setStageIndex(3); setSelected([]); }
+    setFeedback(null);
+  }
+
   function advance() {
-    if (awaitingNextRound) {
-      startNextRound();
-      return;
-    }
-
+    if (awaitingNextRound) { startNextRound(); return; }
     const ok = checkStage();
-    if (!ok) return;
-
-    if (stage.key === "START_CHORD") {
-      setStageIndex(1);
-      setFeedback(null);
-      return;
-    }
-
-    if (stage.key === "IDENTIFY_GUIDES") {
-      setStageIndex(2);
-      setFeedback(null);
-      return;
-    }
-
-    if (stage.key === "MOVE_GUIDES") {
-      setStageIndex(3);
-      setSelected([]);
-      setFeedback(null);
-      return;
-    }
+    if (ok) advanceStage();
   }
 
   advanceRef.current = advance;
@@ -739,13 +719,37 @@ function App() {
   const selectionText = displaySelection.map((c) => c.note).join(" ") || "—";
   const canAdvance = awaitingNextRound || currentSelection.length === maxSelectionsForStage();
 
-  // In MIDI mode, auto-submit after holding the correct notes for 3 seconds.
+  const infoCardClass = [
+    "info-card",
+    awaitingNextRound ? "success" : "",
+    !awaitingNextRound && feedback?.type === "bad" ? "feedback-bad" : "",
+    !awaitingNextRound && (feedback?.type === "good" || feedback?.type === "okay") ? "feedback-good" : "",
+  ].filter(Boolean).join(" ");
+
+  // MIDI mode: auto-submit after holding correct notes for 3 seconds.
   // eslint-disable-next-line react-hooks/rules-of-hooks
   useEffect(() => {
     if (!midiPlayMode || !canAdvance) return;
     const timer = setTimeout(() => advanceRef.current?.(), 3000);
     return () => clearTimeout(timer);
   }, [midiPlayMode, canAdvance]);
+
+  // Mouse mode: auto-check when selection is complete, then advance or clear.
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  useEffect(() => {
+    if (midiPlayMode || awaitingNextRound || !canAdvance) return;
+    const ok = checkStage();
+    const timer = setTimeout(() => { if (ok) advanceStage(); else clearCurrentStage(); }, 1200);
+    return () => clearTimeout(timer);
+  }, [canAdvance, midiPlayMode, awaitingNextRound]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Mouse mode: auto-start next round after showing "Transition complete".
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  useEffect(() => {
+    if (midiPlayMode || !awaitingNextRound) return;
+    const timer = setTimeout(() => startNextRound(), 2500);
+    return () => clearTimeout(timer);
+  }, [awaitingNextRound, midiPlayMode]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <main className="app-shell">
@@ -791,7 +795,7 @@ function App() {
                 onClick={() => { const p = generateRandomProgression(); setCustomText(p); resetAll(); }}
                 title="Random progression"
               >
-                <Shuffle size={15} />
+                <Dices size={15} />
               </button>
             </div>
           </label>
@@ -814,9 +818,21 @@ function App() {
               )}
             </select>
           </label>
+
+          <label>
+            Hints
+            <button
+              className={showHints ? "hint-button active" : "hint-button"}
+              onClick={() => setShowHints((value) => !value)}
+              type="button"
+            >
+              <Eye size={16} />
+              {showHints ? "On" : "Off"}
+            </button>
+          </label>
         </div>
 
-        <div className={awaitingNextRound ? "info-card success" : "info-card"}>
+        <div className={infoCardClass}>
           <div className="info-card-stage">
             <div className="flow-strip">
               {STAGES.map((item, index) => (
@@ -826,16 +842,19 @@ function App() {
               ))}
             </div>
 
-            <h2>{awaitingNextRound ? "Transition complete" : stage.title}</h2>
-            {!awaitingNextRound && (
-              <p className="instruction">{stage.instruction}</p>
-            )}
-            {awaitingNextRound && transitionSummary && (
-              <div className="transition-summary">
-                <strong>{transitionSummary.title}</strong>
-                <span>{transitionSummary.body}</span>
-                <em>{transitionSummary.next}</em>
-              </div>
+            {feedback && !awaitingNextRound ? (
+              <>
+                <h2>{feedback.title}</h2>
+                <p className="instruction">{feedback.body}</p>
+              </>
+            ) : (
+              <>
+                <h2>{awaitingNextRound ? "Transition complete" : stage.title}</h2>
+                {!awaitingNextRound && <p className="instruction">{stage.instruction}</p>}
+                {awaitingNextRound && transitionSummary && (
+                  <p className="instruction">{transitionSummary}</p>
+                )}
+              </>
             )}
           </div>
 
@@ -880,47 +899,6 @@ function App() {
             ))}
           </div>
         </div>
-
-        <div className="action-row">
-          <div className="selection-group">
-            <div className="selection-readout">
-              <span>{stage.key === "FILL_CHORD" ? "Chord so far" : "Selected"}</span>
-              <strong>{selectionText}</strong>
-            </div>
-
-            <button
-              className={showHints ? "hint-button active" : "hint-button"}
-              onClick={() => setShowHints((value) => !value)}
-              type="button"
-            >
-              <Eye size={16} />
-              Hints
-            </button>
-          </div>
-
-          <button className="primary-button" disabled={!canAdvance} onClick={advance}>
-            {awaitingNextRound ? (
-              <>
-                Next round
-                <ChevronRight size={17} />
-              </>
-            ) : (
-              <>
-                <Check size={17} />
-                Submit
-              </>
-            )}
-          </button>
-
-        </div>
-
-        {feedback && (
-          <div className={`feedback ${feedback.type}`}>
-            <strong>{feedback.title}</strong>
-            <span>{feedback.body}</span>
-          </div>
-        )}
-
 
       </section>
     </main>

@@ -49,11 +49,6 @@ button {
 }
 
 .topbar,
-.action-row {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
 
 .eyebrow {
   margin: 0 0 6px;
@@ -111,15 +106,11 @@ select {
   background-position: right 10px center;
 }
 
-.selection-group {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-right: auto;
-}
 
 .hint-button {
   height: 42px;
+  width: 100%;
+  margin-top: 7px;
   border-radius: 14px;
   display: inline-flex;
   gap: 8px;
@@ -285,97 +276,26 @@ select {
   cursor: default;
 }
 
-.action-row {
-  gap: 10px;
-  margin-top: 18px;
-}
-
-.selection-readout {
-  min-width: 230px;
-  min-height: 54px;
-  border-radius: 18px;
-  padding: 9px 14px;
-  background: #f4f4f6;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-}
-
-.selection-readout span {
-  color: #8a8a92;
-  font-size: 11px;
-  text-transform: uppercase;
-  letter-spacing: 0.09em;
-  font-weight: 800;
-}
-
-.selection-readout strong {
-  margin-top: 2px;
-  font-size: 18px;
-  letter-spacing: -0.03em;
-}
-
-.primary-button,
-.secondary-button,
-.ghost-button {
-  height: 44px;
-  padding: 0 16px;
-  border-radius: 15px;
-  display: inline-flex;
-  gap: 8px;
-  align-items: center;
-  justify-content: center;
-  cursor: pointer;
-  font-weight: 750;
-}
-
-.primary-button {
-  color: white;
-  background: #055160;
-}
-
-.secondary-button,
-.ghost-button {
-  color: #1e1e22;
-  background: #f2f2f4;
-}
-
-.ghost-button {
-  height: 38px;
-}
-
 button:disabled {
   opacity: 0.36;
   cursor: not-allowed;
 }
 
-.feedback {
-  margin-top: 18px;
-  border-radius: 22px;
-  padding: 17px;
-  display: grid;
-  gap: 7px;
-  font-size: 14px;
+.info-card.feedback-good .info-card-stage {
+  background: #dcfce7;
+  color: #14532d;
 }
 
-.feedback.good {
-  background: #d1e7dd;
-  color: #0f5132;
+.info-card.feedback-bad .info-card-stage {
+  background: #fee2e2;
+  color: #7f1d1d;
 }
 
-.feedback.okay {
-  background: #fff3cd;
-  color: #664d03;
-}
-
-.feedback.bad {
-  background: #f8d7da;
-  color: #842029;
-}
-
-.feedback strong {
-  font-size: 17px;
-  letter-spacing: -0.025em;
+.selected-notes {
+  margin: 6px 0 0;
+  font-size: 13px;
+  opacity: 0.72;
+  letter-spacing: 0.02em;
 }
 
 .hint {
@@ -414,14 +334,11 @@ button:disabled {
     white-space: normal;
   }
 
-  .action-row {
-    flex-wrap: wrap;
-  }
 }
 
 
 .controls.key-controls {
-  grid-template-columns: 150px 1fr 1fr;
+  grid-template-columns: 150px 1fr 1fr 90px;
 }
 
 .progression-field {
@@ -627,26 +544,6 @@ button:disabled {
 }
 
 
-.transition-summary {
-  display: grid;
-  gap: 6px;
-}
-
-.transition-summary strong {
-  font-size: 18px;
-  letter-spacing: -0.025em;
-}
-
-.transition-summary span,
-.transition-summary em {
-  color: currentColor;
-  opacity: 0.78;
-  font-style: normal;
-}
-
-.transition-summary em {
-  font-weight: 750;
-}
 
 
 /* During Transition Complete, the completed destination chord turns green.
@@ -666,16 +563,11 @@ button:disabled {
 .cell.source-guide.ghost:not(.selected):not(.moved-guide) {
   background: rgba(255, 255, 255, 0.94);
   color: #34343a;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.08);
   outline: none;
-  box-shadow:
-    0 1px 2px rgba(0,0,0,0.08),
-    inset 0 0 0 2px rgba(242, 140, 40, 0.95);
 }
 
-/* If hint mode is also on, keep the same clean orange outline. */
 .cell.source-guide.ghost.guide-hint:not(.selected):not(.moved-guide) {
-  background: rgba(255, 255, 255, 0.94);
-  color: #34343a;
   box-shadow:
     0 1px 2px rgba(0,0,0,0.08),
     inset 0 0 0 2px rgba(242, 140, 40, 0.95);
