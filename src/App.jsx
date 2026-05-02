@@ -754,15 +754,9 @@ function App() {
   return (
     <main className="app-shell">
       <section className="panel">
-        <div className="topbar">
-          <div>
-            <p className="eyebrow">Isomorphic Grid</p>
-            <h1>Voice Leading Trainer</h1>
-          </div>
-
-        </div>
-
         <div className="controls key-controls">
+          <div className="brand">IsoFlow</div>
+
           <label>
             Key
             <select

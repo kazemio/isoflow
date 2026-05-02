@@ -48,8 +48,6 @@ button {
   padding: 28px;
 }
 
-.topbar,
-
 .eyebrow {
   margin: 0 0 6px;
   color: #8b8b93;
@@ -59,11 +57,13 @@ button {
   font-weight: 700;
 }
 
-h1 {
-  margin: 0;
+.brand {
+  font-size: 17px;
+  font-weight: 800;
   letter-spacing: -0.04em;
-  font-size: 34px;
-  line-height: 1;
+  color: #1b1b1f;
+  align-self: center;
+  padding-right: 20px;
 }
 
 h2 {
@@ -338,7 +338,7 @@ button:disabled {
 
 
 .controls.key-controls {
-  grid-template-columns: 150px 1fr 1fr 90px;
+  grid-template-columns: auto 150px 1fr 1fr 90px;
 }
 
 .progression-field {
