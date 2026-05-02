@@ -143,29 +143,43 @@ select {
 
 .flow-strip {
   display: flex;
-  gap: 6px;
+  gap: 12px;
+  margin-bottom: 8px;
 }
 
 .flow-step {
-  height: 26px;
-  padding: 0 10px;
-  border-radius: 999px;
-  display: grid;
-  place-items: center;
-  color: #77777f;
-  background: #f0f0f2;
-  font-weight: 800;
-  font-size: 12px;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  border: 1.5px solid #c7c7cc;
+  background: transparent;
+  transition: all 0.15s ease;
 }
 
 .flow-step.active {
-  color: white;
-  background: #111;
+  border-color: #111;
+  background: transparent;
 }
 
 .flow-step.done {
-  background: #dedee3;
-  color: #111;
+  border-color: #111;
+  background: #111;
+}
+
+.fade-in {
+  animation: fadeInStep 0.25s ease-in-out forwards;
+}
+
+@keyframes fadeInStep {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .current-card {
@@ -214,7 +228,7 @@ select {
   border-radius: 13px;
   color: #34343a;
   background: rgba(255, 255, 255, 0.94);
-  box-shadow: 0 1px 2px rgba(0,0,0,0.08), inset 0 0 0 1px rgba(0,0,0,0.04);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), inset 0 0 0 1px rgba(0, 0, 0, 0.04);
   font-size: 12px;
   font-weight: 760;
   transition: transform 120ms ease, box-shadow 120ms ease, background 120ms ease;
@@ -222,38 +236,38 @@ select {
 
 .cell:hover {
   transform: translateY(-1px);
-  box-shadow: 0 7px 18px rgba(0,0,0,0.1), inset 0 0 0 1px rgba(0,0,0,0.04);
+  box-shadow: 0 7px 18px rgba(0, 0, 0, 0.1), inset 0 0 0 1px rgba(0, 0, 0, 0.04);
 }
 
 .cell.target {
-  box-shadow: 0 1px 2px rgba(0,0,0,0.08), inset 0 0 0 2px rgba(0, 0, 0, 0.20);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), inset 0 0 0 2px rgba(0, 0, 0, 0.20);
 }
 
 .cell.guide-hint {
-  box-shadow: 0 1px 2px rgba(0,0,0,0.08), inset 0 0 0 2px rgba(230, 126, 34, 0.72);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), inset 0 0 0 2px rgba(230, 126, 34, 0.72);
 }
 
 .cell.can-stay {
-  box-shadow: 0 1px 2px rgba(0,0,0,0.08), inset 0 0 0 3px rgba(230, 126, 34, 0.9);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), inset 0 0 0 3px rgba(230, 126, 34, 0.9);
 }
 
 .cell.selected {
   background: #111;
   color: white;
-  box-shadow: 0 11px 24px rgba(0,0,0,0.22);
+  box-shadow: 0 11px 24px rgba(0, 0, 0, 0.22);
 }
 
 .cell.midi-held:not(.success-tone) {
   background: rgba(70, 108, 255, 0.16);
   color: #1c1f2a;
   box-shadow:
-    0 7px 18px rgba(0,0,0,0.10),
+    0 7px 18px rgba(0, 0, 0, 0.10),
     inset 0 0 0 2px rgba(70, 108, 255, 0.58);
 }
 
 .cell.midi-held.selected {
   box-shadow:
-    0 11px 24px rgba(0,0,0,0.22),
+    0 11px 24px rgba(0, 0, 0, 0.22),
     inset 0 0 0 3px rgba(70, 108, 255, 0.70);
 }
 
@@ -269,7 +283,7 @@ select {
 .cell.final-guide {
   background: #f28c28;
   color: #fff;
-  box-shadow: 0 10px 24px rgba(242, 140, 40, 0.28), inset 0 0 0 1px rgba(255,255,255,0.22);
+  box-shadow: 0 10px 24px rgba(242, 140, 40, 0.28), inset 0 0 0 1px rgba(255, 255, 255, 0.22);
 }
 
 .cell.source-guide.selected,
@@ -310,9 +324,17 @@ button:disabled {
   white-space: nowrap;
 }
 
-.step-row.step-good .step-text  { color: #14532d; }
-.step-row.step-okay .step-text  { color: #713f00; }
-.step-row.step-bad .step-text   { color: #7f1d1d; }
+.step-row.step-good .step-text {
+  color: #14532d;
+}
+
+.step-row.step-okay .step-text {
+  color: #713f00;
+}
+
+.step-row.step-bad .step-text {
+  color: #7f1d1d;
+}
 
 .chord-line {
   display: flex;
@@ -431,7 +453,49 @@ button:disabled {
 
 @media (max-width: 900px) {
   .controls.key-controls {
-    grid-template-columns: 1fr;
+    grid-template-columns: 1fr 1fr 42px;
+    grid-template-areas:
+      "brand brand brand"
+      "key prog prog"
+      "midi midi hint";
+  }
+
+  .controls.key-controls .brand {
+    grid-area: brand;
+    margin-bottom: 6px;
+  }
+
+  .ctrl-key {
+    grid-area: key;
+  }
+
+  .ctrl-prog {
+    grid-area: prog;
+  }
+
+  .ctrl-midi {
+    grid-area: midi;
+  }
+
+  .ctrl-hint {
+    grid-area: hint;
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+  }
+
+  .hint-text {
+    display: none;
+  }
+
+  .hint-label-text {
+    opacity: 0;
+    pointer-events: none;
+    user-select: none;
+  }
+
+  .hint-button {
+    width: 42px;
   }
 
   .cell {
@@ -446,13 +510,23 @@ button:disabled {
 
 /* During Transition Complete, the completed destination chord turns green.
    On Next Round, awaitingNextRound becomes false, so these return to normal selected/black styling. */
+@keyframes success-flash {
+  0%, 30% {
+    background: #2d7a43;
+    box-shadow: 0 10px 24px rgba(45, 122, 67, 0.30), inset 0 0 0 1px rgba(255,255,255,0.22);
+  }
+  100% {
+    background: #111;
+    box-shadow: 0 11px 24px rgba(0,0,0,0.22);
+  }
+}
+
 .cell.success-tone,
 .cell.success-tone.selected,
 .cell.success-tone.moved-guide,
 .cell.success-tone.final-guide {
-  background: #2d7a43;
   color: white;
-  box-shadow: 0 10px 24px rgba(45, 122, 67, 0.30), inset 0 0 0 1px rgba(255,255,255,0.22);
+  animation: success-flash 0.5s ease forwards;
 }
 
 
@@ -461,13 +535,13 @@ button:disabled {
 .cell.source-guide.ghost:not(.selected):not(.moved-guide) {
   background: rgba(255, 255, 255, 0.94);
   color: #34343a;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.08);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), inset 0 0 0 2px rgba(242, 140, 40, 0.95);
   outline: none;
 }
 
 .cell.source-guide.ghost.guide-hint:not(.selected):not(.moved-guide) {
   box-shadow:
-    0 1px 2px rgba(0,0,0,0.08),
+    0 1px 2px rgba(0, 0, 0, 0.08),
     inset 0 0 0 2px rgba(242, 140, 40, 0.95);
 }
 
@@ -478,37 +552,59 @@ button:disabled {
   background: rgba(255, 255, 255, 0.94);
   color: #34343a;
   box-shadow:
-    0 1px 2px rgba(0,0,0,0.08),
+    0 1px 2px rgba(0, 0, 0, 0.08),
     inset 0 0 0 2px rgba(242, 140, 40, 0.95);
 }
 
 /* If a hinted answer is already selected, keep the selected fill but add a clear orange outline. */
 .cell.guide-hint.selected:not(.success-tone) {
   box-shadow:
-    0 11px 24px rgba(0,0,0,0.22),
+    0 11px 24px rgba(0, 0, 0, 0.22),
     inset 0 0 0 3px rgba(242, 140, 40, 0.95);
 }
 
 
 @keyframes pulse-correct {
-  0%   { transform: scale(1); }
-  40%  { transform: scale(1.06); box-shadow: 0 0 0 4px rgba(45,122,67,0.25), 0 6px 20px rgba(0,0,0,0.18); }
-  100% { transform: scale(1); }
+  0% {
+    transform: scale(1);
+  }
+
+  40% {
+    transform: scale(1.06);
+    box-shadow: 0 0 0 4px rgba(45, 122, 67, 0.25), 0 6px 20px rgba(0, 0, 0, 0.18);
+  }
+
+  100% {
+    transform: scale(1);
+  }
 }
 
 @keyframes shake-wrong {
-  0%, 100% { transform: translateX(0); }
-  20%       { transform: translateX(-4px); }
-  60%       { transform: translateX(4px); }
-  80%       { transform: translateX(-2px); }
+
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+
+  20% {
+    transform: translateX(-4px);
+  }
+
+  60% {
+    transform: translateX(4px);
+  }
+
+  80% {
+    transform: translateX(-2px);
+  }
 }
 
-.step-row.step-good ~ .grid .cell.selected,
-.step-row.step-good ~ .grid .cell.midi-held {
+.step-row.step-good~.grid .cell.selected,
+.step-row.step-good~.grid .cell.midi-held {
   animation: pulse-correct 0.5s ease forwards;
 }
 
-.step-row.step-bad ~ .grid .cell.selected,
-.step-row.step-bad ~ .grid .cell.midi-held {
+.step-row.step-bad~.grid .cell.selected,
+.step-row.step-bad~.grid .cell.midi-held {
   animation: shake-wrong 0.35s ease forwards;
 }

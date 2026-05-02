@@ -35,22 +35,22 @@ const PROGRESSION_OPTIONS = {
 const STAGES = [
   {
     key: "START_CHORD",
-    title: "Build starting chord",
+    title: "Build starting chord.",
     instruction: "Select all four notes of the current chord."
   },
   {
     key: "IDENTIFY_GUIDES",
-    title: "Identify guide tones",
+    title: "Identify guide tones.",
     instruction: "From that voicing, select the 3rd and 7th only."
   },
   {
     key: "MOVE_GUIDES",
-    title: "Move guide tones",
+    title: "Move guide tones.",
     instruction: "Transform each guide tone into the next chord. A voice may stay put if it is already correct."
   },
   {
     key: "FILL_CHORD",
-    title: "Fill destination chord",
+    title: "Fill destination chord.",
     instruction: "The guide tones are already part of the chord. Add the remaining two chord tones."
   }
 ];
@@ -611,7 +611,7 @@ function App() {
         const completedDestination = combined;
         setPendingDestination(completedDestination);
         setAwaitingNextRound(true);
-        setTransitionSummary(`Next round starts from ${toSymbol} with those notes selected.`);
+        setTransitionSummary(`✓ ${toSymbol} complete`);
         setFeedback(null);
       } else {
         setFeedback({
@@ -654,7 +654,7 @@ function App() {
     setPendingDestination(null);
     setTransitionSummary(null);
     setAwaitingNextRound(false);
-    setStageIndex(0);
+    setStageIndex(1);
   }
 
   function clearCurrentStage() {
@@ -720,11 +720,11 @@ function App() {
   const canAdvance = awaitingNextRound || currentSelection.length === maxSelectionsForStage();
 
 
-  // MIDI mode: auto-submit after holding correct notes for 3 seconds.
+  // MIDI mode: auto-submit after holding correct notes for 0.5 seconds.
   // eslint-disable-next-line react-hooks/rules-of-hooks
   useEffect(() => {
     if (!midiPlayMode || !canAdvance) return;
-    const timer = setTimeout(() => advanceRef.current?.(), 3000);
+    const timer = setTimeout(() => advanceRef.current?.(), 500);
     return () => clearTimeout(timer);
   }, [midiPlayMode, canAdvance]);
 
@@ -733,17 +733,17 @@ function App() {
   useEffect(() => {
     if (midiPlayMode || awaitingNextRound || !canAdvance) return;
     const ok = checkStage();
-    const timer = setTimeout(() => { if (ok) advanceStage(); else clearCurrentStage(); }, 1200);
+    const timer = setTimeout(() => { if (ok) advanceStage(); else clearCurrentStage(); }, 500);
     return () => clearTimeout(timer);
   }, [canAdvance, midiPlayMode, awaitingNextRound]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Mouse mode: auto-start next round after showing "Transition complete".
+  // Auto-start next round after holding the completed chord state.
   // eslint-disable-next-line react-hooks/rules-of-hooks
   useEffect(() => {
-    if (midiPlayMode || !awaitingNextRound) return;
-    const timer = setTimeout(() => startNextRound(), 2500);
+    if (!awaitingNextRound) return;
+    const timer = setTimeout(() => startNextRound(), 500);
     return () => clearTimeout(timer);
-  }, [awaitingNextRound, midiPlayMode]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [awaitingNextRound]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <main className="app-shell">
@@ -751,7 +751,7 @@ function App() {
         <div className="controls key-controls">
           <div className="brand"><span className="brand-icon">IF</span>IsoFlow</div>
 
-          <label>
+          <label className="ctrl-key">
             Key
             <select
               value={keyCenter}
@@ -763,7 +763,7 @@ function App() {
             </select>
           </label>
 
-          <label>
+          <label className="ctrl-prog">
             Progression
             <div className="progression-field">
               <input
@@ -781,14 +781,14 @@ function App() {
                 type="button"
                 className="random-button"
                 onClick={() => { const p = generateRandomProgression(); setCustomText(p); resetAll(); }}
-                title="Random progression"
+                title="Random"
               >
                 <Dices size={15} />
               </button>
             </div>
           </label>
 
-          <label>
+          <label className="ctrl-midi">
             MIDI
             <select
               value={selectedMidiInputId}
@@ -807,34 +807,33 @@ function App() {
             </select>
           </label>
 
-          <label>
-            Hints
+          <label className="ctrl-hint">
+            <span className="hint-label-text">Hints</span>
             <button
               className={showHints ? "hint-button active" : "hint-button"}
               onClick={() => setShowHints((value) => !value)}
               type="button"
+              title="Hints"
             >
               <Eye size={16} />
-              {showHints ? "On" : "Off"}
+              <span className="hint-text">{showHints ? "On" : "Off"}</span>
             </button>
           </label>
         </div>
 
         <div className={`step-row${feedback && !awaitingNextRound ? ` step-${feedback.type}` : awaitingNextRound ? " step-good" : ""}`}>
-          <div className="step-line">
-            <div className="flow-strip">
-              {STAGES.map((item, index) => (
-                <div key={item.key} className={index === stageIndex ? "flow-step active" : index < stageIndex ? "flow-step done" : "flow-step"}>
-                  {index + 1}
-                </div>
-              ))}
-            </div>
+          <div className="flow-strip">
+            {STAGES.map((item, index) => (
+              <div key={item.key} className={index === stageIndex ? "flow-step active" : index < stageIndex ? "flow-step done" : "flow-step"} />
+            ))}
+          </div>
+          <div className="step-line fade-in" key={feedback?.title || transitionSummary || stage.title}>
             <span className="step-text">
               {feedback && !awaitingNextRound
                 ? feedback.title
                 : awaitingNextRound
-                ? transitionSummary || "Transition complete"
-                : stage.title}
+                  ? transitionSummary || "Transition complete"
+                  : stage.title}
             </span>
           </div>
           <div className="chord-line">
