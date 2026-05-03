@@ -416,17 +416,16 @@ button:disabled {
 
 
 .controls.key-controls {
-  grid-template-columns: auto 150px 1fr 90px 1fr 90px;
+  grid-template-columns: auto 150px 1fr 90px 90px 1fr 160px;
 }
 
 .ctrl-random {
-  align-self: end;
 }
 
 .random-button {
   width: 100%;
   height: 42px;
-  margin-top: 0;
+  margin-top: 7px;
   border-radius: 14px;
   display: grid;
   place-items: center;
@@ -450,16 +449,19 @@ button:disabled {
   }
 
   .controls.key-controls {
-    grid-template-columns: 1fr 1fr 42px;
+    grid-template-columns: 1fr 1fr 42px 42px;
     grid-template-areas:
-      "brand brand brand"
-      "key prog rand"
-      "midi midi hint";
+      "brand brand brand brand"
+      "key   prog  rand  hint"
+      "midi  midi  view  view";
   }
 
   .ctrl-random {
     grid-area: rand;
-    align-self: end;
+  }
+
+  .ctrl-view {
+    grid-area: view;
   }
 
   .controls.key-controls .brand {
@@ -491,16 +493,13 @@ button:disabled {
     display: none;
   }
 
-  .hint-label-text {
-    opacity: 0;
-    pointer-events: none;
-    user-select: none;
+  .hint-button {
+    width: 42px;
+    margin-top: 7px;
   }
 
-  .hint-button,
   .random-button {
     width: 42px;
-    margin-top: 0;
   }
 
   .cell {
@@ -613,3 +612,112 @@ button:disabled {
 .step-row.step-bad~.grid-outer .cell.midi-held {
   animation: shake-wrong 0.35s ease forwards;
 }
+
+/* ── Segmented layout control ── */
+.seg-control {
+  position: relative;
+  display: flex;
+  background: rgba(247, 247, 248, 0.9);
+  border: 1px solid rgba(0, 0, 0, 0.09);
+  border-radius: 14px;
+  padding: 3px;
+  gap: 3px;
+  height: 42px;
+  margin-top: 7px;
+  box-sizing: border-box;
+  width: 100%;
+}
+
+/* sliding pill */
+.seg-control::before {
+  content: '';
+  position: absolute;
+  top: 3px;
+  left: 3px;
+  width: calc((100% - 9px) / 2);
+  height: calc(100% - 6px);
+  background: #111;
+  border-radius: 10px;
+  transition: transform 180ms cubic-bezier(0.4, 0, 0.2, 1);
+  transform: translateX(calc(var(--seg-x, 0) * (100% + 3px)));
+  pointer-events: none;
+}
+
+.seg-option {
+  position: relative;
+  z-index: 1;
+  flex: 1;
+  height: 100%;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+  color: #74747c;
+  font-size: 12px;
+  font-weight: 750;
+  cursor: pointer;
+  transition: color 180ms;
+}
+
+.seg-option.active {
+  color: white;
+}
+
+/* ── Piano keyboard ── */
+.piano-outer {
+  overflow-x: auto;
+  margin-bottom: 14px;
+}
+
+.piano-keyboard {
+  position: relative;
+  display: flex;
+  height: 130px;
+  width: max-content;
+  margin: 0 auto;
+  user-select: none;
+}
+
+.piano-key.white {
+  width: 38px;
+  height: 130px;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid rgba(0, 0, 0, 0.09);
+  border-radius: 0 0 10px 10px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.08);
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  padding-bottom: 6px;
+  cursor: pointer;
+  z-index: 1;
+  position: relative;
+  font-size: 9px;
+  color: #74747c;
+  font-weight: 700;
+}
+
+.piano-key.black {
+  width: 24px;
+  height: 80px;
+  background: #1b1b1f;
+  border-radius: 0 0 6px 6px;
+  position: absolute;
+  left: calc((var(--white-idx) + 1) * 38px - 12px);
+  top: 0;
+  z-index: 2;
+  cursor: pointer;
+}
+
+/* ── Piano key states ── */
+.piano-key.white.selected  { background: #111; color: white; box-shadow: 0 4px 12px rgba(0,0,0,0.25); }
+.piano-key.black.selected  { background: #555; }
+.piano-key.white.midi-held { background: #dde4f5; }
+.piano-key.black.midi-held { background: #3a3a55; }
+.piano-key.white.guide-hint { box-shadow: inset 0 0 0 2px rgba(242,140,40,0.95), 0 1px 3px rgba(0,0,0,0.08); }
+.piano-key.black.guide-hint { box-shadow: inset 0 0 0 2px rgba(242,140,40,0.95); }
+.piano-key.white.source-guide { box-shadow: inset 0 0 0 2px rgba(242,140,40,0.5), 0 1px 3px rgba(0,0,0,0.08); }
+.piano-key.black.source-guide { box-shadow: inset 0 0 0 2px rgba(242,140,40,0.5); }
+.piano-key.white.moved-guide { background: #f28c28; color: white; }
+.piano-key.black.moved-guide { background: #c06a10; }
+.piano-key.white.success-tone { background: #2d7a43; color: white; }
+.piano-key.black.success-tone { background: #1e5c32; }

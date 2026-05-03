@@ -108,6 +108,43 @@ function buildGrid(rows = 6, cols = 12, startNote = 6) {
 // Change if you have customised the Global Low Row Note in the LinnStrument settings.
 const MIDI_BASE_NOTE = 30;
 
+// Piano keyboard: 37 keys, C3 (MIDI 48) to C6 (MIDI 84)
+const PIANO_MIDI_START = 48;
+const PIANO_MIDI_END   = 84;
+const BLACK_PCS = new Set([1, 3, 6, 8, 10]); // Db Eb Gb Ab Bb
+
+function buildPianoKeys() {
+  const keys = [];
+  let whiteIndex = 0;
+  for (let midi = PIANO_MIDI_START; midi <= PIANO_MIDI_END; midi++) {
+    const pc = ((midi % 12) + 12) % 12;
+    const isBlack = BLACK_PCS.has(pc);
+    keys.push({ midi, pc, note: NOTES[pc], isBlack, whiteIndex: isBlack ? null : whiteIndex });
+    if (!isBlack) whiteIndex++;
+  }
+  return keys;
+}
+
+const PIANO_KEYS = buildPianoKeys();
+
+function buildPianoCells() {
+  return PIANO_KEYS.map((k) => ({
+    id: `piano-${k.midi}`,
+    row: 0,
+    col: k.midi - PIANO_MIDI_START,
+    pitchClass: k.pc,
+    note: k.note,
+    midi: k.midi,
+  }));
+}
+
+const PIANO_CELLS = buildPianoCells();
+
+function getPrevWhiteIndex(blackKey) {
+  const whites = PIANO_KEYS.filter((k) => !k.isBlack && k.midi < blackKey.midi);
+  return whites[whites.length - 1]?.whiteIndex ?? 0;
+}
+
 function uniqueNotesFromCells(cells) {
   return [...new Set(cells.map((c) => c.note))];
 }
@@ -163,6 +200,7 @@ function containsPitchSet(cells, targetNotes) {
 }
 
 function distance(a, b) {
+  if (a.midi != null && b.midi != null) return Math.abs(a.midi - b.midi);
   return Math.abs(a.col - b.col) + Math.abs(a.row - b.row) * 1.35;
 }
 
@@ -228,6 +266,7 @@ function generateGuideCandidates(startGuides, toGuideNotes, grid) {
 function App() {
   const GRID = useMemo(() => buildGrid(8, 8, 6), []);
 
+  const [viewMode, setViewMode] = useState("grid");
   const [keyCenter, setKeyCenter] = useState("C");
   const [customText, setCustomText] = useState("ii V I");
 
@@ -374,6 +413,12 @@ function App() {
   }
 
   function resolveMidiCell(noteNumber) {
+    // Piano mode: direct 1-to-1 mapping by MIDI number (octave-aware)
+    if (viewMode === "piano") {
+      const pianoCell = PIANO_CELLS.find((c) => c.midi === noteNumber);
+      if (pianoCell) return pianoCell;
+    }
+
     const pitchClass = ((noteNumber % 12) + 12) % 12;
 
     const cellsWithNote = GRID.flat().filter((c) => ((c.pitchClass % 12) + 12) % 12 === pitchClass);
@@ -411,9 +456,8 @@ function App() {
 
   function refreshMidiHeldCells() {
     const ids = Object.values(midiPressedRef.current || {});
-    const next = ids
-      .map((id) => GRID.flat().find((c) => c.id === id))
-      .filter(Boolean);
+    const allCells = [...GRID.flat(), ...PIANO_CELLS];
+    const next = ids.map((id) => allCells.find((c) => c.id === id)).filter(Boolean);
     setMidiHeldCells(next);
   }
 
@@ -439,7 +483,7 @@ function App() {
 
     refreshMidiHeldCells();
 
-    const cell = GRID.flat().find((c) => c.id === id);
+    const cell = GRID.flat().find((c) => c.id === id) ?? PIANO_CELLS.find((c) => c.id === id);
     if (cell) deselectCell(cell);
   }
 
@@ -729,6 +773,41 @@ function App() {
     ].filter(Boolean).join(" ");
   }
 
+  function handlePianoKey(key) {
+    const pianoCell = PIANO_CELLS.find((c) => c.midi === key.midi);
+    if (pianoCell) toggleCell(pianoCell);
+  }
+
+  function pianoKeyClass(key) {
+    const pianoCell = PIANO_CELLS.find((c) => c.midi === key.midi);
+    if (!pianoCell) return key.isBlack ? "piano-key black" : "piano-key white";
+
+    const curr = activeSelection();
+    const remainingDestinationTones = toChord.tones.filter((n) => !toChord.guide.includes(n));
+    const isSelected    = curr.some((c) => c.id === pianoCell.id);
+    const isMidiHeld    = midiHeldCells.some((c) => c.id === pianoCell.id);
+    const isStartGuide  = startGuides.some((c) => c.id === pianoCell.id);
+    const isMovedGuide  = movedGuides.some((c) => c.id === pianoCell.id);
+    const isSuccessTone = awaitingNextRound && pendingDestination?.some((c) => c.note === key.note);
+
+    const isHint = showHints && !awaitingNextRound && (
+      (stage.key === "START_CHORD"     && fromChord.tones.includes(key.note)) ||
+      (stage.key === "IDENTIFY_GUIDES" && startVoicing.some((c) => c.note === key.note) && fromChord.guide.includes(key.note)) ||
+      (stage.key === "MOVE_GUIDES"     && toChord.guide.includes(key.note)) ||
+      (stage.key === "FILL_CHORD"      && !isMovedGuide && remainingDestinationTones.includes(key.note))
+    );
+
+    return [
+      key.isBlack ? "piano-key black" : "piano-key white",
+      isSelected   ? "selected"    : "",
+      isMidiHeld   ? "midi-held"   : "",
+      isHint       ? "guide-hint"  : "",
+      isStartGuide && stage.key !== "START_CHORD" ? "source-guide" : "",
+      isMovedGuide ? "moved-guide" : "",
+      isSuccessTone ? "success-tone" : "",
+    ].filter(Boolean).join(" ");
+  }
+
   const currentSelection = activeSelection();
   const displaySelection = stage.key === "FILL_CHORD" ? [...movedGuides, ...selected] : currentSelection;
   const selectionText = displaySelection.map((c) => c.note).join(" ") || "—";
@@ -813,6 +892,7 @@ function App() {
           </label>
 
           <label className="ctrl-random">
+            Random
             <button
               type="button"
               className="random-button"
@@ -820,6 +900,19 @@ function App() {
               title="Random"
             >
               <Dices size={15} />
+            </button>
+          </label>
+
+          <label className="ctrl-hint">
+            <span className="hint-label-text">Hints</span>
+            <button
+              className={showHints ? "hint-button active" : "hint-button"}
+              onClick={() => setShowHints((value) => !value)}
+              type="button"
+              title="Hints"
+            >
+              <Eye size={16} />
+              <span className="hint-text">{showHints ? "On" : "Off"}</span>
             </button>
           </label>
 
@@ -842,17 +935,20 @@ function App() {
             </select>
           </label>
 
-          <label className="ctrl-hint">
-            <span className="hint-label-text">Hints</span>
-            <button
-              className={showHints ? "hint-button active" : "hint-button"}
-              onClick={() => setShowHints((value) => !value)}
-              type="button"
-              title="Hints"
-            >
-              <Eye size={16} />
-              <span className="hint-text">{showHints ? "On" : "Off"}</span>
-            </button>
+          <label className="ctrl-view">
+            Layout
+            <div className="seg-control" style={{ "--seg-x": viewMode === "piano" ? 1 : 0 }}>
+              <button
+                type="button"
+                className={viewMode === "grid" ? "seg-option active" : "seg-option"}
+                onClick={() => setViewMode("grid")}
+              >Grid</button>
+              <button
+                type="button"
+                className={viewMode === "piano" ? "seg-option active" : "seg-option"}
+                onClick={() => setViewMode("piano")}
+              >Piano</button>
+            </div>
           </label>
         </div>
 
@@ -886,20 +982,45 @@ function App() {
           </div>
         </div>
 
-        <div className="grid-outer">
-          <div className="grid">
-            {GRID.flat().map((cell) => (
-              <button
-                key={cell.id}
-                className={cellClass(cell)}
-                onClick={() => toggleCell(cell)}
-                title={`${cell.note} — row ${cell.row + 1}, col ${cell.col + 1}`}
-              >
-                {cell.note}
-              </button>
-            ))}
+        {viewMode === "piano" ? (
+          <div className="piano-outer">
+            <div className="piano-keyboard">
+              {PIANO_KEYS.filter((k) => !k.isBlack).map((key) => (
+                <button
+                  key={key.midi}
+                  className={pianoKeyClass(key)}
+                  onClick={() => handlePianoKey(key)}
+                  style={{ "--white-idx": key.whiteIndex }}
+                >
+                  <span className="piano-note-label">{key.note}</span>
+                </button>
+              ))}
+              {PIANO_KEYS.filter((k) => k.isBlack).map((key) => (
+                <button
+                  key={key.midi}
+                  className={pianoKeyClass(key)}
+                  onClick={() => handlePianoKey(key)}
+                  style={{ "--white-idx": getPrevWhiteIndex(key) }}
+                />
+              ))}
+            </div>
           </div>
-        </div>
+        ) : (
+          <div className="grid-outer">
+            <div className="grid">
+              {GRID.flat().map((cell) => (
+                <button
+                  key={cell.id}
+                  className={cellClass(cell)}
+                  onClick={() => toggleCell(cell)}
+                  title={`${cell.note} — row ${cell.row + 1}, col ${cell.col + 1}`}
+                >
+                  {cell.note}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
 
       </section>
     </main>
