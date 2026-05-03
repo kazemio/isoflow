@@ -392,11 +392,11 @@ button:disabled {
   }
 
   .app-shell {
-    padding: 16px;
+    padding: 16px 10px;
   }
 
   .panel {
-    padding: 18px;
+    padding: 18px 9px;
   }
 
   .controls {
