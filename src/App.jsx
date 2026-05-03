@@ -226,20 +226,7 @@ function generateGuideCandidates(startGuides, toGuideNotes, grid) {
 }
 
 function App() {
-  const [isMobile, setIsMobile] = useState(
-    typeof window !== "undefined" && window.innerWidth < 900
-  );
-
-  useEffect(() => {
-    const handler = () => setIsMobile(window.innerWidth < 900);
-    window.addEventListener("resize", handler);
-    return () => window.removeEventListener("resize", handler);
-  }, []);
-
-  const GRID = useMemo(
-    () => isMobile ? buildGrid(8, 8, 6) : buildGrid(8, 16, 6),
-    [isMobile]
-  );
+  const GRID = useMemo(() => buildGrid(8, 8, 6), []);
 
   const [keyCenter, setKeyCenter] = useState("C");
   const [customText, setCustomText] = useState("ii V I");
@@ -289,19 +276,6 @@ function App() {
     stage.key === "IDENTIFY_GUIDES"
       ? fromChord.guide
       : toChord.guide;
-
-  useEffect(() => {
-    setPairIndex(0);
-    setStageIndex(0);
-    setStartVoicing([]);
-    setStartGuides([]);
-    setMovedGuides([]);
-    setSelected([]);
-    setFeedback(null);
-    setAwaitingNextRound(false);
-    setPendingDestination(null);
-    setTransitionSummary(null);
-  }, [isMobile]);
 
   function resetAll(nextKey = keyCenter) {
     setKeyCenter(nextKey);
@@ -650,9 +624,28 @@ function App() {
   }
 
   function advanceStage() {
-    if (stage.key === "START_CHORD")         setStageIndex(1);
-    else if (stage.key === "IDENTIFY_GUIDES") setStageIndex(2);
-    else if (stage.key === "MOVE_GUIDES")    { setStageIndex(3); setSelected([]); }
+    if (stage.key === "START_CHORD") {
+      setStageIndex(1);
+    } else if (stage.key === "IDENTIFY_GUIDES") {
+      const newMidiPressed = {};
+      const newMovedGuides = [];
+      
+      for (const [noteNum, id] of Object.entries(midiPressedRef.current)) {
+        const cell = GRID.flat().find((c) => c.id === id);
+        if (cell && toChord.guide.includes(cell.note)) {
+          newMidiPressed[noteNum] = id;
+          newMovedGuides.push(cell);
+        }
+      }
+      
+      midiPressedRef.current = newMidiPressed;
+      refreshMidiHeldCells();
+      setMovedGuides(newMovedGuides);
+      setStageIndex(2);
+    } else if (stage.key === "MOVE_GUIDES") {
+      setStageIndex(3);
+      setSelected([]);
+    }
     setFeedback(null);
   }
 
@@ -892,7 +885,7 @@ function App() {
           </div>
         </div>
 
-        <div className="grid" style={{ gridTemplateColumns: `repeat(${GRID[0].length}, ${GRID[0].length <= 8 ? 36 : 42}px)` }}>
+        <div className="grid">
             {GRID.flat().map((cell) => (
               <button
                 key={cell.id}
