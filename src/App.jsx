@@ -799,27 +799,28 @@ function App() {
 
           <label className="ctrl-prog">
             Progression
-            <div className="progression-field">
-              <input
-                list="progression-presets"
-                value={customText}
-                onChange={(e) => { setCustomText(e.target.value); resetAll(); }}
-                placeholder="ii V I"
-              />
-              <datalist id="progression-presets">
-                {Object.entries(PROGRESSION_OPTIONS).map(([name, chords]) => (
-                  <option key={name} value={chords.join(" ")}>{name}</option>
-                ))}
-              </datalist>
-              <button
-                type="button"
-                className="random-button"
-                onClick={() => { const p = generateRandomProgression(); setCustomText(p); resetAll(); }}
-                title="Random"
-              >
-                <Dices size={15} />
-              </button>
-            </div>
+            <input
+              list="progression-presets"
+              value={customText}
+              onChange={(e) => { setCustomText(e.target.value); resetAll(); }}
+              placeholder="ii V I"
+            />
+            <datalist id="progression-presets">
+              {Object.entries(PROGRESSION_OPTIONS).map(([name, chords]) => (
+                <option key={name} value={chords.join(" ")}>{name}</option>
+              ))}
+            </datalist>
+          </label>
+
+          <label className="ctrl-random">
+            <button
+              type="button"
+              className="random-button"
+              onClick={() => { const p = generateRandomProgression(); setCustomText(p); resetAll(); }}
+              title="Random"
+            >
+              <Dices size={15} />
+            </button>
           </label>
 
           <label className="ctrl-midi">
@@ -885,7 +886,8 @@ function App() {
           </div>
         </div>
 
-        <div className="grid">
+        <div className="grid-outer">
+          <div className="grid">
             {GRID.flat().map((cell) => (
               <button
                 key={cell.id}
@@ -897,6 +899,7 @@ function App() {
               </button>
             ))}
           </div>
+        </div>
 
       </section>
     </main>
