@@ -400,28 +400,39 @@ function App() {
   }
 
   function resolveMidiCell(noteNumber) {
-    // Map the controller's note number to the equivalent grid pitchClass.
-    // Both share the same isomorphic layout (+5/row, +1/col) so the offset is constant.
-    const gridBasePitch = GRID[GRID.length - 1][0].pitchClass; // bottom-left cell
-    const targetPitch = noteNumber - MIDI_BASE_NOTE + gridBasePitch;
+    const pitchClass = ((noteNumber % 12) + 12) % 12;
 
-    const candidates = GRID.flat().filter((c) => c.pitchClass === targetPitch);
+    const cellsWithNote = GRID.flat().filter((c) => ((c.pitchClass % 12) + 12) % 12 === pitchClass);
+    if (cellsWithNote.length === 0) return null;
 
-    if (candidates.length === 1) return candidates[0];
-
-    if (candidates.length > 1) {
-      // Multiple cells share this pitchClass (overlapping rows) — pick the one
-      // closest to the last played cell so runs of notes stay in the same area.
-      const last = lastMidiCellRef.current;
-      if (!last) return candidates[0];
-      return candidates
-        .map((cell) => ({ cell, d: distance(last, cell) }))
-        .sort((a, b) => a.d - b.d)[0].cell;
+    // IDENTIFY_GUIDES: prefer a cell already in startVoicing.
+    if (stage.key === "IDENTIFY_GUIDES" && startVoicing.length > 0) {
+      const fromVoicing = cellsWithNote.find((c) => startVoicing.some((v) => v.id === c.id));
+      if (fromVoicing) return fromVoicing;
     }
 
-    // Note is outside the grid range — fall back to pitch-class matching.
-    const pitchClass = ((noteNumber % 12) + 12) % 12;
-    return pickCellForPitchClass(pitchClass);
+    // MOVE_GUIDES: prefer the cell closest to a source guide tone.
+    if (stage.key === "MOVE_GUIDES" && startGuides.length > 0) {
+      return cellsWithNote
+        .map((c) => ({ c, d: Math.min(...startGuides.map((sg) => distance(sg, c))) }))
+        .sort((a, b) => a.d - b.d)[0].c;
+    }
+
+    // FILL_CHORD: if the pressed note is already a locked guide tone, return that exact
+    // cell — selectableCellsForStage will block it, preventing it from being added to
+    // `selected` and inflating the combined count above 4.
+    if (stage.key === "FILL_CHORD" && movedGuides.length > 0) {
+      const locked = movedGuides.find((c) => ((c.pitchClass % 12) + 12) % 12 === pitchClass);
+      if (locked) return locked;
+    }
+
+    // Always anchor to the grid centre so every note independently seeks the middle
+    // regardless of octave played or what was pressed previously.
+    const anchor = { row: (GRID.length - 1) / 2, col: (GRID[0].length - 1) / 2 };
+
+    return cellsWithNote
+      .map((cell) => ({ cell, d: distance(anchor, cell) }))
+      .sort((a, b) => a.d - b.d)[0].cell;
   }
 
   function refreshMidiHeldCells() {
@@ -567,6 +578,17 @@ function App() {
 
     if (stage.key === "MOVE_GUIDES") {
       const correctNotes = samePitchSet(movedGuides, toChord.guide);
+
+      // In MIDI mode the user can't control which exact cell a note lands on,
+      // so skip the movement-distance penalty and accept correct pitches only.
+      if (midiPlayMode) {
+        setFeedback(correctNotes
+          ? { type: "good", title: "Guide tones moved.", body: `${toChord.guide.join(" and ")} in place.` }
+          : { type: "bad", title: "Wrong destination guide tones.", body: `For ${toSymbol} in ${keyCenter}, guide tones are: ${toChord.guide.join(" · ")}.` }
+        );
+        return correctNotes;
+      }
+
       const mapping = startGuides.length === 2 && movedGuides.length === 2 ? bestMapping(startGuides, movedGuides) : null;
 
       const guideCandidates = generateGuideCandidates(startGuides, toChord.guide, GRID);
@@ -727,6 +749,25 @@ function App() {
     const timer = setTimeout(() => advanceRef.current?.(), 500);
     return () => clearTimeout(timer);
   }, [midiPlayMode, canAdvance]);
+
+  // MIDI mode: when stage advances, re-apply physically-held notes to the new stage's
+  // selection so the user doesn't have to release and repress.
+  // Exception: MOVE_GUIDES requires the user to actively press NEW destination notes —
+  // re-applying the old guide tones would trigger an immediate wrong-notes error.
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  useEffect(() => {
+    if (!midiPlayMode) return;
+    if (stage.key === "MOVE_GUIDES") return;
+    const heldIds = Object.values(midiPressedRef.current);
+    if (heldIds.length === 0) return;
+    setFeedback(null);
+    setActiveSelection(() =>
+      heldIds
+        .map((id) => GRID.flat().find((c) => c.id === id))
+        .filter(Boolean)
+        .filter((c) => !movedGuides.some((mg) => mg.id === c.id))
+    );
+  }, [stageIndex]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Mouse mode: auto-check when selection is complete, then advance or clear.
   // eslint-disable-next-line react-hooks/rules-of-hooks
