@@ -788,11 +788,13 @@ function App() {
     const isMidiHeld    = midiHeldCells.some((c) => c.id === pianoCell.id);
     const isStartGuide  = startGuides.some((c) => c.id === pianoCell.id);
     const isMovedGuide  = movedGuides.some((c) => c.id === pianoCell.id);
-    const isSuccessTone = awaitingNextRound && pendingDestination?.some((c) => c.note === key.note);
+    const isSuccessTone = awaitingNextRound && pendingDestination?.some((c) =>
+      c.midi != null ? c.midi === key.midi : c.note === key.note
+    );
 
     const isHint = showHints && !awaitingNextRound && (
       (stage.key === "START_CHORD"     && fromChord.tones.includes(key.note)) ||
-      (stage.key === "IDENTIFY_GUIDES" && startVoicing.some((c) => c.note === key.note) && fromChord.guide.includes(key.note)) ||
+      (stage.key === "IDENTIFY_GUIDES" && startVoicing.some((c) => c.midi != null ? c.midi === key.midi : c.note === key.note) && fromChord.guide.includes(key.note)) ||
       (stage.key === "MOVE_GUIDES"     && toChord.guide.includes(key.note)) ||
       (stage.key === "FILL_CHORD"      && !isMovedGuide && remainingDestinationTones.includes(key.note))
     );
@@ -1004,6 +1006,11 @@ function App() {
                 />
               ))}
             </div>
+            <p className="piano-range-label">
+              {NOTES[PIANO_MIDI_START % 12]}{Math.floor(PIANO_MIDI_START / 12) - 1}
+              {" – "}
+              {NOTES[PIANO_MIDI_END % 12]}{Math.floor(PIANO_MIDI_END / 12) - 1}
+            </p>
           </div>
         ) : (
           <div className="grid-outer">

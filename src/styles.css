@@ -255,24 +255,13 @@ select {
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), inset 0 0 0 3px rgba(230, 126, 34, 0.9);
 }
 
-.cell.selected {
-  background: #111;
-  color: white;
-  box-shadow: 0 11px 24px rgba(0, 0, 0, 0.22);
-}
-
+.cell.selected,
 .cell.midi-held:not(.success-tone) {
   background: rgba(70, 108, 255, 0.16);
   color: #1c1f2a;
   box-shadow:
     0 7px 18px rgba(0, 0, 0, 0.10),
     inset 0 0 0 2px rgba(70, 108, 255, 0.58);
-}
-
-.cell.midi-held.selected {
-  box-shadow:
-    0 11px 24px rgba(0, 0, 0, 0.22),
-    inset 0 0 0 3px rgba(70, 108, 255, 0.70);
 }
 
 .cell.ghost:not(.selected):not(.moved-guide) {
@@ -668,6 +657,15 @@ button:disabled {
   margin-bottom: 14px;
 }
 
+.piano-range-label {
+  text-align: center;
+  font-size: 11px;
+  color: #8b8b93;
+  margin: 6px 0 0;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+}
+
 .piano-keyboard {
   position: relative;
   display: flex;
@@ -709,10 +707,10 @@ button:disabled {
 }
 
 /* ── Piano key states ── */
-.piano-key.white.selected  { background: #111; color: white; box-shadow: 0 4px 12px rgba(0,0,0,0.25); }
-.piano-key.black.selected  { background: #555; }
-.piano-key.white.midi-held { background: #dde4f5; }
-.piano-key.black.midi-held { background: #3a3a55; }
+.piano-key.white.selected,
+.piano-key.white.midi-held { background: #dde4f5; color: #1c1f2a; box-shadow: 0 1px 3px rgba(0,0,0,0.08), inset 0 0 0 2px rgba(70,108,255,0.58); }
+.piano-key.black.selected,
+.piano-key.black.midi-held { background: #3a3a55; box-shadow: inset 0 0 0 2px rgba(70,108,255,0.58); }
 .piano-key.white.guide-hint { box-shadow: inset 0 0 0 2px rgba(242,140,40,0.95), 0 1px 3px rgba(0,0,0,0.08); }
 .piano-key.black.guide-hint { box-shadow: inset 0 0 0 2px rgba(242,140,40,0.95); }
 .piano-key.white.source-guide { box-shadow: inset 0 0 0 2px rgba(242,140,40,0.5), 0 1px 3px rgba(0,0,0,0.08); }
