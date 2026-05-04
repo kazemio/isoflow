@@ -107,6 +107,7 @@ function buildGrid(rows = 6, cols = 12, startNote = 6) {
 // MIDI note sent by the bottom-left pad of the LinnStrument 200 (default: 30 = F#/Gb).
 // Change if you have customised the Global Low Row Note in the LinnStrument settings.
 const MIDI_BASE_NOTE = 30;
+const MIDI_OFFSET = MIDI_BASE_NOTE - 6; // grid startNote=6 → cell.pitchClass + 24 = estimated MIDI
 
 // Piano keyboard: 37 keys, C3 (MIDI 48) to C6 (MIDI 84)
 const PIANO_MIDI_START = 48;
@@ -293,8 +294,11 @@ function App() {
   const midiPressedRef = useRef({});
   const midiNoteOnRef = useRef(null);
   const midiNoteOffRef = useRef(null);
+  const midiNoteRegistryRef = useRef({}); // cellId → actual MIDI note pressed
+  const registerAnchorRef = useRef(null); // grid cell of root note, set once per chord pair
   const [midiHeldCells, setMidiHeldCells] = useState([]);
   const advanceRef = useRef(null);
+  const toChordRef = useRef(null);
 
   const midiPlayMode = Boolean(selectedMidiInputId);
 
@@ -328,6 +332,8 @@ function App() {
     setAwaitingNextRound(false);
     setPendingDestination(null);
     setTransitionSummary(null);
+    midiNoteRegistryRef.current = {};
+    registerAnchorRef.current = null;
   }
 
   function activeSelection() {
@@ -391,6 +397,14 @@ function App() {
     setActiveSelection((current) => current.filter((item) => item.id !== cell.id));
   }
 
+  function withMidi(cell) {
+    const midi =
+      midiNoteRegistryRef.current[cell.id] ??
+      cell.midi ??
+      (cell.pitchClass != null ? cell.pitchClass + MIDI_OFFSET : null);
+    return midi != null ? { ...cell, midi } : cell;
+  }
+
   function pickCellForPitchClass(pitchClass) {
     const candidates = GRID.flat().filter((c) => c.pitchClass % 12 === pitchClass);
     if (candidates.length === 0) return null;
@@ -445,9 +459,23 @@ function App() {
       if (locked) return locked;
     }
 
-    // Always anchor to the grid centre so every note independently seeks the middle
-    // regardless of octave played or what was pressed previously.
-    const anchor = { row: (GRID.length - 1) / 2, col: (GRID[0].length - 1) / 2 };
+    // If this note is the chord root and no anchor exists yet, place it near the
+    // grid centre and let it become the register anchor for the whole exercise.
+    const rootPc = ((noteIndex(fromChord.tones[0]) % 12) + 12) % 12;
+    const isRoot = pitchClass === rootPc;
+
+    if (isRoot && !registerAnchorRef.current) {
+      const center = { row: (GRID.length - 1) / 2, col: (GRID[0].length - 1) / 2 };
+      const resolved = cellsWithNote
+        .map((cell) => ({ cell, d: distance(center, cell) }))
+        .sort((a, b) => a.d - b.d)[0].cell;
+      registerAnchorRef.current = resolved;
+      return resolved;
+    }
+
+    // All other notes: resolve nearest to the register anchor so the whole
+    // chord clusters in the same register as the root.
+    const anchor = registerAnchorRef.current ?? { row: (GRID.length - 1) / 2, col: (GRID[0].length - 1) / 2 };
 
     return cellsWithNote
       .map((cell) => ({ cell, d: distance(anchor, cell) }))
@@ -470,6 +498,7 @@ function App() {
     if (!cell) return;
 
     midiPressedRef.current[String(noteNumber)] = cell.id;
+    midiNoteRegistryRef.current[cell.id] = noteNumber;
     lastMidiCellRef.current = cell;
     refreshMidiHeldCells();
 
@@ -597,14 +626,27 @@ function App() {
     if (stage.key === "MOVE_GUIDES") {
       const correctNotes = samePitchSet(movedGuides, toChord.guide);
 
-      // In MIDI mode the user can't control which exact cell a note lands on,
-      // so skip the movement-distance penalty and accept correct pitches only.
       if (midiPlayMode) {
-        setFeedback(correctNotes
-          ? { type: "good", title: "Guide tones moved.", body: `${toChord.guide.join(" and ")} in place.` }
-          : { type: "bad", title: "Wrong destination guide tones.", body: `For ${toSymbol} in ${keyCenter}, guide tones are: ${toChord.guide.join(" · ")}.` }
+        if (!correctNotes) {
+          setFeedback({ type: "bad", title: "Wrong destination guide tones.", body: `For ${toSymbol} in ${keyCenter}, guide tones are: ${toChord.guide.join(" · ")}.` });
+          return false;
+        }
+        // Octave-aware check: use actual MIDI semitone distances.
+        // Each voice should move by a minor third (3 semitones) or less.
+        const enrichedFrom = startGuides.map(withMidi);
+        const enrichedTo   = movedGuides.map(withMidi);
+        const mapping = startGuides.length === 2 && movedGuides.length === 2 ? bestMapping(enrichedFrom, enrichedTo) : null;
+        const ok = mapping !== null && mapping.maxJump <= 3;
+        const stayed = mapping?.pairs.filter((p) => p.from.id === p.to.id).length ?? 0;
+        const stayText = stayed > 0 ? ` ${stayed} voice${stayed === 1 ? "" : "s"} stayed put.` : "";
+        setFeedback(ok
+          ? { type: mapping.total <= 1 ? "good" : "okay",
+              title: mapping.total <= 1 ? "Guide tones moved optimally." : "Correct, slightly more movement.",
+              body: `Movement ${mapping.total.toFixed(1)} semitones.${stayText}` }
+          : { type: "bad", title: "Too much motion.",
+              body: `Largest voice movement: ${mapping?.maxJump ?? "?"} semitones. Keep each voice within a minor third.` }
         );
-        return correctNotes;
+        return ok;
       }
 
       const mapping = startGuides.length === 2 && movedGuides.length === 2 ? bestMapping(startGuides, movedGuides) : null;
@@ -642,10 +684,26 @@ function App() {
 
     if (stage.key === "FILL_CHORD") {
       const combined = [...movedGuides, ...selected];
-      const ok =
+      const pitchOk =
         combined.length === 4 &&
         samePitchSet(combined, toChord.tones) &&
         containsPitchSet(combined, movedGuides.map((c) => c.note));
+
+      if (pitchOk && midiPlayMode) {
+        // Octave check: added notes must be within an octave of at least one guide tone.
+        const guideMidis = movedGuides.map((c) => withMidi(c).midi).filter((m) => m != null);
+        const registerOk = selected.every((c) => {
+          const m = withMidi(c).midi;
+          return m == null || guideMidis.some((gm) => Math.abs(m - gm) <= 12);
+        });
+        if (!registerOk) {
+          setFeedback({ type: "bad", title: "Notes too far from guide tones.",
+            body: "Keep the remaining chord tones in the same register." });
+          return false;
+        }
+      }
+
+      const ok = pitchOk;
 
       if (ok) {
         const completedDestination = combined;
@@ -700,6 +758,7 @@ function App() {
   }
 
   advanceRef.current = advance;
+  toChordRef.current = toChord;
 
   function startNextRound() {
     const destination = pendingDestination || [...movedGuides, ...selected];
@@ -714,6 +773,8 @@ function App() {
     setTransitionSummary(null);
     setAwaitingNextRound(false);
     setStageIndex(1);
+    midiNoteRegistryRef.current = {};
+    registerAnchorRef.current = null;
   }
 
   function clearCurrentStage() {
@@ -735,6 +796,13 @@ function App() {
     const isMovedGuide = movedGuides.some((c) => c.id === cell.id);
     const isFinalLockedGuide = stage.key === "FILL_CHORD" && isMovedGuide;
     const isMidiHeld = midiHeldCells.some((c) => c.id === cell.id);
+    // source-guide orange applies in IDENTIFY_GUIDES (where guide tones are chosen)
+    // and whenever the cell is placed as a destination (movedGuide).
+    // In MOVE_GUIDES / FILL_CHORD, held-but-not-placed cells get their orange
+    // solely from midi-held — no dependency on potentially-stale midiHeldCells here.
+    const showAsSourceGuide = isStartGuide && (
+      stage.key === "IDENTIFY_GUIDES" || isMovedGuide
+    );
 
     // Hints now mean: outline the correct answer for the current step.
     // Stage 1: any cell whose pitch is in the source chord.
@@ -766,7 +834,7 @@ function App() {
       isSelected ? "selected" : "",
       hintAnswer ? "guide-hint" : "",
       isStartVoicing && stage.key !== "START_CHORD" ? "ghost" : "",
-      isStartGuide ? "source-guide" : "",
+      showAsSourceGuide ? "source-guide" : "",
       isMovedGuide ? "moved-guide" : "",
       isFinalLockedGuide ? "locked final-guide" : "",
       isSuccessfulDestinationTone ? "success-tone" : ""
@@ -826,12 +894,36 @@ function App() {
 
   // MIDI mode: when stage advances, re-apply physically-held notes to the new stage's
   // selection so the user doesn't have to release and repress.
-  // Exception: MOVE_GUIDES requires the user to actively press NEW destination notes —
-  // re-applying the old guide tones would trigger an immediate wrong-notes error.
   // eslint-disable-next-line react-hooks/rules-of-hooks
   useEffect(() => {
     if (!midiPlayMode) return;
-    if (stage.key === "MOVE_GUIDES") return;
+
+    if (stage.key === "MOVE_GUIDES") {
+      // Selectively re-apply: only held notes that ARE destination guide tones
+      // (common tones like F→F) get added to movedGuides. Notes that need to move
+      // (e.g. C→B) are cleared from midiPressedRef so the user can press them fresh.
+      const destGuideNotes = new Set(toChordRef.current?.guide ?? []);
+      const allCells = [...GRID.flat(), ...PIANO_CELLS];
+      const toKeep = [];
+
+      for (const [noteStr, cellId] of Object.entries(midiPressedRef.current)) {
+        const cell = allCells.find((c) => c.id === cellId);
+        if (cell && destGuideNotes.has(cell.note)) {
+          toKeep.push(cell);
+        }
+        // Non-destination notes stay in midiPressedRef so they still show as held
+        // (orange solid while held, orange outline after release).
+      }
+
+      refreshMidiHeldCells();
+
+      if (toKeep.length > 0) {
+        setFeedback(null);
+        setActiveSelection(() => toKeep);
+      }
+      return;
+    }
+
     const heldIds = Object.values(midiPressedRef.current);
     if (heldIds.length === 0) return;
     setFeedback(null);
