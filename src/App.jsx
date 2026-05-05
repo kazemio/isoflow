@@ -298,6 +298,7 @@ function App() {
   const registerAnchorRef = useRef(null); // grid cell of root note, set once per chord pair
   const [midiHeldCells, setMidiHeldCells] = useState([]);
   const advanceRef = useRef(null);
+  const advanceStageRef = useRef(null);
   const toChordRef = useRef(null);
 
   const midiPlayMode = Boolean(selectedMidiInputId);
@@ -513,7 +514,9 @@ function App() {
     refreshMidiHeldCells();
 
     const cell = GRID.flat().find((c) => c.id === id) ?? PIANO_CELLS.find((c) => c.id === id);
-    if (cell) deselectCell(cell);
+    if (cell) {
+      deselectCell(cell);
+    }
   }
 
   midiNoteOnRef.current = onMidiNoteOn;
@@ -631,20 +634,20 @@ function App() {
           setFeedback({ type: "bad", title: "Wrong destination guide tones.", body: `For ${toSymbol} in ${keyCenter}, guide tones are: ${toChord.guide.join(" · ")}.` });
           return false;
         }
-        // Octave-aware check: use actual MIDI semitone distances.
-        // Each voice should move by a minor third (3 semitones) or less.
-        const enrichedFrom = startGuides.map(withMidi);
-        const enrichedTo   = movedGuides.map(withMidi);
-        const mapping = startGuides.length === 2 && movedGuides.length === 2 ? bestMapping(enrichedFrom, enrichedTo) : null;
+        // Grid-distance check: each voice should stay within 3 grid steps.
+        // resolveMidiCell already snaps destinations to the closest grid cell,
+        // so half/whole-step moves are always ≤ 2 grid steps; large leaps fail.
+        const mapping = startGuides.length === 2 && movedGuides.length === 2
+          ? bestMapping(startGuides, movedGuides) : null;
         const ok = mapping !== null && mapping.maxJump <= 3;
         const stayed = mapping?.pairs.filter((p) => p.from.id === p.to.id).length ?? 0;
         const stayText = stayed > 0 ? ` ${stayed} voice${stayed === 1 ? "" : "s"} stayed put.` : "";
         setFeedback(ok
           ? { type: mapping.total <= 1 ? "good" : "okay",
               title: mapping.total <= 1 ? "Guide tones moved optimally." : "Correct, slightly more movement.",
-              body: `Movement ${mapping.total.toFixed(1)} semitones.${stayText}` }
+              body: `Movement ${mapping.total.toFixed(1)}.${stayText}` }
           : { type: "bad", title: "Too much motion.",
-              body: `Largest voice movement: ${mapping?.maxJump ?? "?"} semitones. Keep each voice within a minor third.` }
+              body: `Largest voice jump: ${mapping?.maxJump?.toFixed(1) ?? "?"}. Keep each voice close.` }
         );
         return ok;
       }
@@ -727,37 +730,46 @@ function App() {
 
   function advanceStage() {
     if (stage.key === "START_CHORD") {
+      const currentPressed = Object.values(midiPressedRef.current);
+      const allCells = [...GRID.flat(), ...PIANO_CELLS];
+      const newStartGuides = currentPressed
+        .map((id) => allCells.find((c) => c.id === id))
+        .filter(Boolean);
+      
+      setStartGuides(newStartGuides);
       setStageIndex(1);
     } else if (stage.key === "IDENTIFY_GUIDES") {
-      const newMidiPressed = {};
-      const newMovedGuides = [];
+      const currentPressed = Object.values(midiPressedRef.current);
+      const allCells = [...GRID.flat(), ...PIANO_CELLS];
+      const newMovedGuides = currentPressed
+        .map((id) => allCells.find((c) => c.id === id))
+        .filter(Boolean);
       
-      for (const [noteNum, id] of Object.entries(midiPressedRef.current)) {
-        const cell = GRID.flat().find((c) => c.id === id);
-        if (cell && toChord.guide.includes(cell.note)) {
-          newMidiPressed[noteNum] = id;
-          newMovedGuides.push(cell);
-        }
-      }
-      
-      midiPressedRef.current = newMidiPressed;
-      refreshMidiHeldCells();
       setMovedGuides(newMovedGuides);
       setStageIndex(2);
     } else if (stage.key === "MOVE_GUIDES") {
+      const currentPressed = Object.values(midiPressedRef.current);
+      const allCells = [...GRID.flat(), ...PIANO_CELLS];
+      
+      const newSelected = currentPressed
+        .map((id) => allCells.find((c) => c.id === id))
+        .filter((cell) => cell && !movedGuides.some((mg) => mg.id === cell.id));
+        
       setStageIndex(3);
-      setSelected([]);
+      setSelected(newSelected);
     }
     setFeedback(null);
   }
 
-  function advance() {
-    if (awaitingNextRound) { startNextRound(); return; }
+  function advance(checkOnly = false) {
+    if (awaitingNextRound) { startNextRound(); return true; }
     const ok = checkStage();
-    if (ok) advanceStage();
+    if (ok && !checkOnly) advanceStage();
+    return ok;
   }
 
   advanceRef.current = advance;
+  advanceStageRef.current = advanceStage;
   toChordRef.current = toChord;
 
   function startNextRound() {
@@ -773,6 +785,19 @@ function App() {
     setTransitionSummary(null);
     setAwaitingNextRound(false);
     setStageIndex(1);
+    
+    // MIDI: carry over all physically held notes into the new round's Step 2 (IDENTIFY_GUIDES).
+    if (midiPlayMode) {
+      const currentPressed = Object.values(midiPressedRef.current);
+      const allCells = [...GRID.flat(), ...PIANO_CELLS];
+      
+      const newStartGuides = currentPressed
+        .map((id) => allCells.find((c) => c.id === id))
+        .filter(Boolean);
+        
+      setStartGuides(newStartGuides);
+    }
+    
     midiNoteRegistryRef.current = {};
     registerAnchorRef.current = null;
   }
@@ -795,15 +820,13 @@ function App() {
     const isStartGuide = startGuides.some((c) => c.id === cell.id);
     const isMovedGuide = movedGuides.some((c) => c.id === cell.id);
     const isFinalLockedGuide = stage.key === "FILL_CHORD" && isMovedGuide;
-    const isMidiHeld = midiHeldCells.some((c) => c.id === cell.id);
-    // source-guide orange applies in IDENTIFY_GUIDES (where guide tones are chosen)
-    // and whenever the cell is placed as a destination (movedGuide).
-    // In MOVE_GUIDES / FILL_CHORD, held-but-not-placed cells get their orange
-    // solely from midi-held — no dependency on potentially-stale midiHeldCells here.
-    const showAsSourceGuide = isStartGuide && (
-      stage.key === "IDENTIFY_GUIDES" || isMovedGuide
-    );
-
+    // Read from both state (for reactivity) AND the ref (always current, catches
+    // the brief window between a stage transition and the midiHeldCells state update).
+    const pressedIds = Object.values(midiPressedRef.current);
+    const isMidiHeld = midiHeldCells.some((c) => c.id === cell.id) ||
+                       pressedIds.includes(cell.id);
+    // Show source-guide orange in IDENTIFY_GUIDES and MOVE_GUIDES.
+    // source-guide class removed — orange driven by midi-held and moved-guide only.
     // Hints now mean: outline the correct answer for the current step.
     // Stage 1: any cell whose pitch is in the source chord.
     // Stage 2: the guide tones inside the user's selected source voicing.
@@ -834,7 +857,6 @@ function App() {
       isSelected ? "selected" : "",
       hintAnswer ? "guide-hint" : "",
       isStartVoicing && stage.key !== "START_CHORD" ? "ghost" : "",
-      showAsSourceGuide ? "source-guide" : "",
       isMovedGuide ? "moved-guide" : "",
       isFinalLockedGuide ? "locked final-guide" : "",
       isSuccessfulDestinationTone ? "success-tone" : ""
@@ -853,7 +875,9 @@ function App() {
     const curr = activeSelection();
     const remainingDestinationTones = toChord.tones.filter((n) => !toChord.guide.includes(n));
     const isSelected    = curr.some((c) => c.id === pianoCell.id);
-    const isMidiHeld    = midiHeldCells.some((c) => c.id === pianoCell.id);
+    const pianoPressedIds = Object.values(midiPressedRef.current);
+    const isMidiHeld = midiHeldCells.some((c) => c.id === pianoCell.id) ||
+                       pianoPressedIds.includes(pianoCell.id);
     const isStartGuide  = startGuides.some((c) => c.id === pianoCell.id);
     const isMovedGuide  = movedGuides.some((c) => c.id === pianoCell.id);
     const isSuccessTone = awaitingNextRound && pendingDestination?.some((c) =>
@@ -883,57 +907,15 @@ function App() {
   const selectionText = displaySelection.map((c) => c.note).join(" ") || "—";
   const canAdvance = awaitingNextRound || currentSelection.length === maxSelectionsForStage();
 
-
-  // MIDI mode: auto-submit after holding correct notes for 0.5 seconds.
+  // MIDI mode: hold correct notes for 0.5 seconds to advance.
   // eslint-disable-next-line react-hooks/rules-of-hooks
   useEffect(() => {
     if (!midiPlayMode || !canAdvance) return;
-    const timer = setTimeout(() => advanceRef.current?.(), 500);
+    const timer = setTimeout(() => {
+      advanceRef.current?.(false);
+    }, 500);
     return () => clearTimeout(timer);
   }, [midiPlayMode, canAdvance]);
-
-  // MIDI mode: when stage advances, re-apply physically-held notes to the new stage's
-  // selection so the user doesn't have to release and repress.
-  // eslint-disable-next-line react-hooks/rules-of-hooks
-  useEffect(() => {
-    if (!midiPlayMode) return;
-
-    if (stage.key === "MOVE_GUIDES") {
-      // Selectively re-apply: only held notes that ARE destination guide tones
-      // (common tones like F→F) get added to movedGuides. Notes that need to move
-      // (e.g. C→B) are cleared from midiPressedRef so the user can press them fresh.
-      const destGuideNotes = new Set(toChordRef.current?.guide ?? []);
-      const allCells = [...GRID.flat(), ...PIANO_CELLS];
-      const toKeep = [];
-
-      for (const [noteStr, cellId] of Object.entries(midiPressedRef.current)) {
-        const cell = allCells.find((c) => c.id === cellId);
-        if (cell && destGuideNotes.has(cell.note)) {
-          toKeep.push(cell);
-        }
-        // Non-destination notes stay in midiPressedRef so they still show as held
-        // (orange solid while held, orange outline after release).
-      }
-
-      refreshMidiHeldCells();
-
-      if (toKeep.length > 0) {
-        setFeedback(null);
-        setActiveSelection(() => toKeep);
-      }
-      return;
-    }
-
-    const heldIds = Object.values(midiPressedRef.current);
-    if (heldIds.length === 0) return;
-    setFeedback(null);
-    setActiveSelection(() =>
-      heldIds
-        .map((id) => GRID.flat().find((c) => c.id === id))
-        .filter(Boolean)
-        .filter((c) => !movedGuides.some((mg) => mg.id === c.id))
-    );
-  }, [stageIndex]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Mouse mode: auto-check when selection is complete, then advance or clear.
   // eslint-disable-next-line react-hooks/rules-of-hooks
@@ -1120,6 +1102,14 @@ function App() {
             </div>
           </div>
         )}
+
+        <div className="debug-midi">
+          {midiHeldCells.length > 0
+            ? midiHeldCells
+                .map((cell) => cell.note)
+                .join(' · ')
+            : '—'}
+        </div>
 
       </section>
     </main>
