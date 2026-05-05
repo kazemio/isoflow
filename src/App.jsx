@@ -192,7 +192,16 @@ function generateRandomProgression() {
 
 function samePitchSet(cells, targetNotes) {
   if (cells.length !== targetNotes.length) return false;
-  return cells.map((c) => c.note).sort().join(",") === [...targetNotes].sort().join(",");
+  const getPC = (note) => {
+    const pc = NOTES.indexOf(note);
+    if (pc !== -1) return pc;
+    // Basic enharmonics fallback
+    const map = { "C#": 1, "Db": 1, "D#": 3, "Eb": 3, "F#": 6, "Gb": 6, "G#": 8, "Ab": 8, "A#": 10, "Bb": 10 };
+    return map[note] ?? -1;
+  };
+  const cellPCs = cells.map((c) => (c.pitchClass % 12 + 12) % 12).sort();
+  const targetPCs = targetNotes.map((n) => getPC(n)).sort();
+  return cellPCs.join(",") === targetPCs.join(",");
 }
 
 function containsPitchSet(cells, targetNotes) {
@@ -611,7 +620,14 @@ function App() {
     }
 
     if (stage.key === "IDENTIFY_GUIDES") {
-      const selectedInsideVoicing = startGuides.every((cell) => startVoicing.some((voiceCell) => voiceCell.id === cell.id));
+      const selectedInsideVoicing = startGuides.every((cell) => {
+        const cellMidi = withMidi(cell).midi;
+        return startVoicing.some((v) => {
+          if (v.id === cell.id) return true;
+          const vMidi = withMidi(v).midi;
+          return vMidi != null && vMidi === cellMidi;
+        });
+      });
       const ok = selectedInsideVoicing && samePitchSet(startGuides, fromChord.guide);
       setFeedback(ok
         ? { type: "good", title: "Guide tones found.", body: `${fromSymbol} guide tones: ${fromChord.guide.join(" and ")}.` }
@@ -825,26 +841,29 @@ function App() {
     const pressedIds = Object.values(midiPressedRef.current);
     const isMidiHeld = midiHeldCells.some((c) => c.id === cell.id) ||
                        pressedIds.includes(cell.id);
-    // Show source-guide orange in IDENTIFY_GUIDES and MOVE_GUIDES.
-    // source-guide class removed — orange driven by midi-held and moved-guide only.
-    // Hints now mean: outline the correct answer for the current step.
-    // Stage 1: any cell whose pitch is in the source chord.
-    // Stage 2: the guide tones inside the user's selected source voicing.
-    // Stage 3: any destination guide-tone cell, plus source guide anchors that can stay.
-    // Stage 4: remaining destination chord tones, while moved guide tones stay locked.
     const remainingDestinationTones = toChord.tones.filter((note) => !toChord.guide.includes(note));
+
+    const isCorrectNote = (note) => {
+      const pc = NOTES.indexOf(note);
+      if (pc !== -1) return (pc % 12 + 12) % 12 === cell.pitchClass;
+      const map = { "C#": 1, "Db": 1, "D#": 3, "Eb": 3, "F#": 6, "Gb": 6, "G#": 8, "Ab": 8, "A#": 10, "Bb": 10 };
+      return (map[note] ?? -1) === cell.pitchClass;
+    };
 
     const hintAnswer =
       showHints &&
       (
-        (stage.key === "START_CHORD" && fromChord.tones.includes(cell.note)) ||
+        (stage.key === "START_CHORD" && fromChord.tones.some(isCorrectNote)) ||
         (stage.key === "IDENTIFY_GUIDES" &&
           startVoicing.some((c) => c.id === cell.id) &&
-          fromChord.guide.includes(cell.note)) ||
-        (stage.key === "MOVE_GUIDES" && toChord.guide.includes(cell.note)) ||
+          fromChord.guide.some(isCorrectNote)) ||
+        (stage.key === "MOVE_GUIDES" && 
+          toChord.guide.some(isCorrectNote) &&
+          startGuides.some((sg) => Math.abs(withMidi(sg).midi - withMidi(cell).midi) <= 5)) ||
         (stage.key === "FILL_CHORD" &&
           !isMovedGuide &&
-          remainingDestinationTones.includes(cell.note))
+          remainingDestinationTones.some(isCorrectNote) &&
+          movedGuides.some((mg) => Math.abs(withMidi(mg).midi - withMidi(cell).midi) <= 12))
       );
 
     const isSuccessfulDestinationTone =
@@ -886,9 +905,16 @@ function App() {
 
     const isHint = showHints && !awaitingNextRound && (
       (stage.key === "START_CHORD"     && fromChord.tones.includes(key.note)) ||
-      (stage.key === "IDENTIFY_GUIDES" && startVoicing.some((c) => c.midi != null ? c.midi === key.midi : c.note === key.note) && fromChord.guide.includes(key.note)) ||
-      (stage.key === "MOVE_GUIDES"     && toChord.guide.includes(key.note)) ||
-      (stage.key === "FILL_CHORD"      && !isMovedGuide && remainingDestinationTones.includes(key.note))
+      (stage.key === "IDENTIFY_GUIDES" && 
+        startVoicing.some((c) => (c.midi != null ? c.midi === key.midi : c.note === key.note)) && 
+        fromChord.guide.includes(key.note)) ||
+      (stage.key === "MOVE_GUIDES"     && 
+        toChord.guide.includes(key.note) && 
+        startGuides.some((sg) => Math.abs(withMidi(sg).midi - key.midi) <= 5)) ||
+      (stage.key === "FILL_CHORD"      && 
+        !isMovedGuide && 
+        remainingDestinationTones.includes(key.note) && 
+        movedGuides.some((mg) => Math.abs(withMidi(mg).midi - key.midi) <= 12))
     );
 
     return [
@@ -907,12 +933,20 @@ function App() {
   const selectionText = displaySelection.map((c) => c.note).join(" ") || "—";
   const canAdvance = awaitingNextRound || currentSelection.length === maxSelectionsForStage();
 
-  // MIDI mode: hold correct notes for 0.5 seconds to advance.
+  // MIDI mode: hold correct notes for 0.5s to register, then flash for 0.5s before advancing.
   // eslint-disable-next-line react-hooks/rules-of-hooks
   useEffect(() => {
     if (!midiPlayMode || !canAdvance) return;
+    
     const timer = setTimeout(() => {
-      advanceRef.current?.(false);
+      // Step 1: Must hold for 500ms to register.
+      const ok = advanceRef.current?.(true);
+      if (ok) {
+        // Step 2: Correct! Show green flash/feedback for 500ms then advance.
+        setTimeout(() => {
+          advanceRef.current?.(false);
+        }, 500);
+      }
     }, 500);
     return () => clearTimeout(timer);
   }, [midiPlayMode, canAdvance]);
@@ -1105,10 +1139,15 @@ function App() {
 
         <div className="debug-midi">
           {midiHeldCells.length > 0
-            ? midiHeldCells
-                .map((cell) => cell.note)
-                .join(' · ')
-            : '—'}
+            ? [...midiHeldCells]
+                .map((c) => withMidi(c))
+                .sort((a, b) => (a.midi || 0) - (b.midi || 0))
+                .map((c) => {
+                  const octave = c.midi != null ? Math.floor(c.midi / 12) - 1 : "";
+                  return `${c.note}${octave}`;
+                })
+                .join(" · ")
+            : "—"}
         </div>
 
       </section>
