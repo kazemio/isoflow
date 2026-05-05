@@ -1020,6 +1020,44 @@ function App() {
     return () => clearTimeout(timer);
   }, [awaitingNextRound]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Live voice-leading score during MOVE_GUIDES — updates on every note change.
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  useEffect(() => {
+    if (stage.key !== "MOVE_GUIDES" || startGuides.length !== 2 || movedGuides.length === 0) {
+      if (stage.key !== "MOVE_GUIDES") setVlScore(null);
+      return;
+    }
+    const enrichedFrom = startGuides.map(withMidi);
+    const enrichedTo   = movedGuides.map(withMidi);
+    const mapping = enrichedFrom.length === enrichedTo.length
+      ? bestMapping(enrichedFrom, enrichedTo)
+      : null;
+    if (!mapping) return;
+
+    // Compute optimal using all valid destination candidates
+    const guideNotes = toChordRef.current?.guide ?? [];
+    const candidates = generateGuideCandidates(startGuides, guideNotes, GRID);
+    let optimal = null;
+    for (const candidate of candidates) {
+      const solved = bestMapping(enrichedFrom, candidate.map(withMidi));
+      if (!optimal || solved.score < optimal.score) optimal = solved;
+    }
+
+    const userDistance   = mapping.total;
+    const optimalDistance = optimal?.total ?? null;
+    const excessDistance  = optimalDistance != null ? userDistance - optimalDistance : null;
+
+    setVlScore({
+      userDistance,
+      optimalDistance,
+      excessDistance,
+      message: mapping.maxJump <= 1 ? "✓ minimal movement" :
+               mapping.maxJump <= 2 ? "✓ close voicing"    :
+               mapping.maxJump <= 4 ? "△ wider movement"   :
+                                      "✗ too much motion",
+    });
+  }, [stage.key, movedGuides, startGuides]); // eslint-disable-line react-hooks/exhaustive-deps
+
   return (
     <main className="app-shell">
       <section className="panel">
