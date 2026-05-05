@@ -461,35 +461,19 @@ function App() {
         .sort((a, b) => a.d - b.d)[0].c;
     }
 
-    // FILL_CHORD: if the pressed note is already a locked guide tone, return that exact
-    // cell — selectableCellsForStage will block it, preventing it from being added to
-    // `selected` and inflating the combined count above 4.
-    if (stage.key === "FILL_CHORD" && movedGuides.length > 0) {
-      const locked = movedGuides.find((c) => ((c.pitchClass % 12) + 12) % 12 === pitchClass);
-      if (locked) return locked;
-    }
-
-    // If this note is the chord root and no anchor exists yet, place it near the
-    // grid centre and let it become the register anchor for the whole exercise.
-    const rootPc = ((noteIndex(fromChord.tones[0]) % 12) + 12) % 12;
-    const isRoot = pitchClass === rootPc;
-
-    if (isRoot && !registerAnchorRef.current) {
-      const center = { row: (GRID.length - 1) / 2, col: (GRID[0].length - 1) / 2 };
-      const resolved = cellsWithNote
-        .map((cell) => ({ cell, d: distance(center, cell) }))
-        .sort((a, b) => a.d - b.d)[0].cell;
-      registerAnchorRef.current = resolved;
-      return resolved;
-    }
-
-    // All other notes: resolve nearest to the register anchor so the whole
-    // chord clusters in the same register as the root.
+    // Default Grid logic: snap to the register anchor or grid center for a stable visual cluster.
     const anchor = registerAnchorRef.current ?? { row: (GRID.length - 1) / 2, col: (GRID[0].length - 1) / 2 };
+    const bestCell = cellsWithNote
+      .map((c) => ({ c, d: distance(anchor, c) }))
+      .sort((a, b) => a.d - b.d)[0].c;
 
-    return cellsWithNote
-      .map((cell) => ({ cell, d: distance(anchor, cell) }))
-      .sort((a, b) => a.d - b.d)[0].cell;
+    // If this note is the chord root and no anchor exists yet, lock it in.
+    const rootPc = ((noteIndex(fromChord.tones[0]) % 12) + 12) % 12;
+    if (pitchClass === rootPc && !registerAnchorRef.current) {
+      registerAnchorRef.current = bestCell;
+    }
+
+    return bestCell;
   }
 
   function refreshMidiHeldCells() {
@@ -650,20 +634,25 @@ function App() {
           setFeedback({ type: "bad", title: "Wrong destination guide tones.", body: `For ${toSymbol} in ${keyCenter}, guide tones are: ${toChord.guide.join(" · ")}.` });
           return false;
         }
-        // Grid-distance check: each voice should stay within 3 grid steps.
-        // resolveMidiCell already snaps destinations to the closest grid cell,
-        // so half/whole-step moves are always ≤ 2 grid steps; large leaps fail.
-        const mapping = startGuides.length === 2 && movedGuides.length === 2
-          ? bestMapping(startGuides, movedGuides) : null;
-        const ok = mapping !== null && mapping.maxJump <= 3;
-        const stayed = mapping?.pairs.filter((p) => p.from.id === p.to.id).length ?? 0;
+
+        // Semitone-distance check: use exact MIDI numbers for voice leading.
+        const sgWithMidi = startGuides.map((c) => withMidi(c));
+        const mgWithMidi = movedGuides.map((c) => withMidi(c));
+        const mapping = sgWithMidi.length === 2 && mgWithMidi.length === 2
+          ? bestMapping(sgWithMidi, mgWithMidi) : null;
+
+        // Thresholds: maxJump of 6 semitones (tritone) is the limit for "smooth".
+        // total of 3 semitones is "optimal".
+        const ok = mapping !== null && mapping.maxJump <= 6;
+        const stayed = mapping?.pairs.filter((p) => p.from.midi === p.to.midi).length ?? 0;
         const stayText = stayed > 0 ? ` ${stayed} voice${stayed === 1 ? "" : "s"} stayed put.` : "";
+        
         setFeedback(ok
-          ? { type: mapping.total <= 1 ? "good" : "okay",
-              title: mapping.total <= 1 ? "Guide tones moved optimally." : "Correct, slightly more movement.",
-              body: `Movement ${mapping.total.toFixed(1)}.${stayText}` }
+          ? { type: mapping.total <= 3 ? "good" : "okay",
+              title: mapping.total <= 3 ? "Guide tones moved optimally." : "Correct, slightly more movement.",
+              body: `Movement: ${mapping.total} semitones.${stayText}` }
           : { type: "bad", title: "Too much motion.",
-              body: `Largest voice jump: ${mapping?.maxJump?.toFixed(1) ?? "?"}. Keep each voice close.` }
+              body: `Leap of ${mapping.maxJump} semitones is too large for smooth leading.` }
         );
         return ok;
       }
@@ -814,7 +803,14 @@ function App() {
       setStartGuides(newStartGuides);
     }
     
-    midiNoteRegistryRef.current = {};
+    // Sync the registry with current physical state to preserve the 
+    // exact octaves of all currently held notes across the transition.
+    const syncedRegistry = {};
+    Object.entries(midiPressedRef.current).forEach(([note, id]) => {
+      syncedRegistry[id] = parseInt(note);
+    });
+    midiNoteRegistryRef.current = syncedRegistry;
+
     registerAnchorRef.current = null;
   }
 
@@ -1144,7 +1140,8 @@ function App() {
                 .sort((a, b) => (a.midi || 0) - (b.midi || 0))
                 .map((c) => {
                   const octave = c.midi != null ? Math.floor(c.midi / 12) - 1 : "";
-                  return `${c.note}${octave}`;
+                  const midiNum = c.midi != null ? ` (${c.midi})` : "";
+                  return `${c.note}${octave}${midiNum}`;
                 })
                 .join(" · ")
             : "—"}
