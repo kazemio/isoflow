@@ -1,8 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Dices, Eye } from "lucide-react";
+import { scoreVoiceLeadingTransition } from "./voiceLeadingScore";
 
 const NOTES = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"];
-const SHOW_DEBUG = false;
+const SHOW_DEBUG = true;
 
 
 function getChordName(symbol, tones) {
@@ -247,7 +248,6 @@ function generateGuideCandidates(startGuides, toGuideNotes, grid) {
       if (samePitchSet(pair, toGuideNotes)) out.push(pair);
     }
   }
-
   const seen = new Set();
   return out.filter((pair) => {
     const key = pair.map((cell) => cell.id).sort().join("|");
@@ -282,6 +282,8 @@ function App() {
   const [midiStatus, setMidiStatus] = useState(midiSupported ? "disconnected" : "unsupported");
   const [midiInputs, setMidiInputs] = useState([]);
   const [selectedMidiInputId, setSelectedMidiInputId] = useState("");
+  const [vlScore, setVlScore] = useState(null);
+  const vlTimerRef = useRef(null);
   const lastMidiCellRef = useRef(null);
   const midiAccessRef = useRef(null);
   const midiHandlerRef = useRef(null);
@@ -295,6 +297,7 @@ function App() {
   const advanceStageRef = useRef(null);
   const toChordRef = useRef(null);
 
+  const [useOctaveMapping, setUseOctaveMapping] = useState(false);
   const midiPlayMode = Boolean(selectedMidiInputId);
 
   const chords = useMemo(() => buildChordsForKey(keyCenter), [keyCenter]);
@@ -427,50 +430,36 @@ function App() {
   }
 
   function resolveMidiCell(noteNumber) {
-    // Piano mode: direct 1-to-1 mapping by MIDI number (octave-aware)
+    // Piano mode: always 1-to-1 mapping by MIDI number (octave-aware)
     if (viewMode === "piano") {
       const pianoCell = PIANO_CELLS.find((c) => c.midi === noteNumber);
       if (pianoCell) return pianoCell;
     }
 
     const pitchClass = ((noteNumber % 12) + 12) % 12;
-
     const cellsWithNote = GRID.flat().filter((c) => ((c.pitchClass % 12) + 12) % 12 === pitchClass);
     if (cellsWithNote.length === 0) return null;
 
-    // IDENTIFY_GUIDES: prefer a cell already in startVoicing.
-    if (stage.key === "IDENTIFY_GUIDES" && startVoicing.length > 0) {
-      const fromVoicing = cellsWithNote.find((c) => startVoicing.some((v) => v.id === c.id));
-      if (fromVoicing) return fromVoicing;
-    }
-
-    // MOVE_GUIDES: prefer the cell closest to a source guide tone.
-    if (stage.key === "MOVE_GUIDES" && startGuides.length > 0) {
+    // Option 1: Performance Mode (Exact MIDI Octave Mapping)
+    if (useOctaveMapping) {
       return cellsWithNote
-        .map((c) => ({ c, d: Math.min(...startGuides.map((sg) => distance(sg, c))) }))
-        .sort((a, b) => a.d - b.d)[0].c;
+        .map((c) => ({ c, diff: Math.abs((c.pitchClass + MIDI_OFFSET) - noteNumber) }))
+        .sort((a, b) => a.diff - b.diff)[0].c;
     }
 
-    // Play mode FILL_CHORD: prefer proximity to source voicing for smooth grid mapping.
-    if (mode === "play" && stage.key === "FILL_CHORD" && startVoicing.length > 0) {
-      return cellsWithNote
-        .map((c) => ({ c, d: Math.min(...startVoicing.map((sv) => distance(sv, c))) }))
-        .sort((a, b) => a.d - b.d)[0].c;
-    }
-
-    // Default Grid logic: snap to the register anchor or grid center for a stable visual cluster.
-    const anchor = registerAnchorRef.current ?? { row: (GRID.length - 1) / 2, col: (GRID[0].length - 1) / 2 };
-    const bestCell = cellsWithNote
-      .map((c) => ({ c, d: distance(anchor, c) }))
+    // Option 2: Training Mode (Contour-Preserving Proximity Mapping)
+    // We'll perform a global re-balance in refreshMidiHeldCells, 
+    // but we need an initial guess here.
+    const target = registerAnchorRef.current || { row: (GRID.length - 1) / 2, col: (GRID[0].length - 1) / 2 };
+    const bestByProximity = cellsWithNote
+      .map((c) => ({ c, d: distance(target, c) }))
       .sort((a, b) => a.d - b.d)[0].c;
 
-    // If this note is the chord root and no anchor exists yet, lock it in.
-    const rootPc = ((noteIndex(fromChord.tones[0]) % 12) + 12) % 12;
-    if (pitchClass === rootPc && !registerAnchorRef.current) {
-      registerAnchorRef.current = bestCell;
+    if (!registerAnchorRef.current) {
+      registerAnchorRef.current = bestByProximity;
     }
 
-    return bestCell;
+    return bestByProximity;
   }
 
   function refreshMidiHeldCells() {
@@ -783,7 +772,25 @@ function App() {
   }
 
   function advance(checkOnly = false) {
-    if (awaitingNextRound) { startNextRound(); return true; }
+    if (awaitingNextRound) {
+      if (!checkOnly) {
+        if (midiPlayMode && stage.key === "FILL_CHORD") {
+          const sMidi = startVoicing.map((c) => withMidi(c).midi).filter(m => m != null);
+          const tMidi = activeSelection().map((c) => withMidi(c).midi).filter(m => m != null);
+          if (sMidi.length === 4 && tMidi.length === 4) {
+            const score = scoreVoiceLeadingTransition(
+              sMidi, tMidi,
+              toChord.tones.map(t => NOTES.indexOf(t)),
+              fromChord.tones.map(t => NOTES.indexOf(t)),
+              toChord.tones.map(t => NOTES.indexOf(t))
+            );
+            setVlScore(score);
+          }
+        }
+        startNextRound();
+      }
+      return true;
+    }
     const ok = checkStage();
     if (ok && !checkOnly) {
       if (stage.key === "FILL_CHORD") {
@@ -825,7 +832,10 @@ function App() {
         setStageIndex(0);
       }
     } else {
-      setStageIndex(0);
+      // Learn mode: if the user is still holding the destination chord notes,
+      // skip START_CHORD (they already have it) and jump to IDENTIFY_GUIDES.
+      const stillHolding = midiPlayMode && Object.keys(midiPressedRef.current).length > 0;
+      setStageIndex(stillHolding ? 1 : 0);
     }
     
     // MIDI: carry over all physically held notes into the new round's Step 2 (IDENTIFY_GUIDES).
@@ -979,7 +989,7 @@ function App() {
       }
     }, 500);
     return () => clearTimeout(timer);
-  }, [midiPlayMode, canAdvance, stageIndex, awaitingNextRound, midiHeldCells]); 
+  }, [midiPlayMode, canAdvance, stageIndex, awaitingNextRound]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Play mode: if we let go of all notes, reset to Step 1.
   useEffect(() => {
@@ -1230,6 +1240,15 @@ function App() {
                   const m = bestMapping(sMidi, tMidi);
                   return m ? `Motion: Max=${m.maxJump}, Total=${m.total}` : "No Mapping Found";
                 })()}
+              </div>
+            )}
+            {vlScore && (
+              <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #eee', fontSize: '10px' }}>
+                <div style={{ fontWeight: '700', color: '#111', marginBottom: '2px' }}>VOICE LEADING</div>
+                <div>User Distance: {vlScore.userDistance}</div>
+                <div>Optimal: {vlScore.optimalDistance}</div>
+                <div>Excess: {vlScore.excessDistance}</div>
+                <div style={{ marginTop: '2px', fontWeight: '700' }}>{vlScore.message}</div>
               </div>
             )}
           </div>

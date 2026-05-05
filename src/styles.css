@@ -11,6 +11,41 @@
   -webkit-font-smoothing: antialiased;
 }
 
+.step-row {
+  position: relative;
+  margin: 30px auto 40px;
+  max-width: 800px;
+  width: 100%;
+}
+
+.vl-pill {
+  position: absolute;
+  top: -30px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(255, 255, 255, 0.95);
+  padding: 4px 12px;
+  border-radius: 20px;
+  font-size: 11px;
+  font-weight: 600;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+  animation: vl-fade-in-out 1.5s forwards;
+  white-space: nowrap;
+  z-index: 100;
+}
+
+.vl-pill.grade-minimal { color: #28a745; border: 1px solid rgba(40, 167, 69, 0.2); }
+.vl-pill.grade-close   { color: #007aff; border: 1px solid rgba(0, 122, 255, 0.2); }
+.vl-pill.grade-wide    { color: #8e8e93; border: 1px solid rgba(142, 142, 147, 0.2); }
+.vl-pill.grade-incorrect { color: #ff3b30; border: 1px solid rgba(255, 59, 48, 0.2); }
+
+@keyframes vl-fade-in-out {
+  0% { opacity: 0; transform: translate(-50%, 10px); }
+  15% { opacity: 1; transform: translate(-50%, 0); }
+  85% { opacity: 1; transform: translate(-50%, 0); }
+  100% { opacity: 0; transform: translate(-50%, -10px); }
+}
+
 body {
   margin: 0;
   min-width: 1120px;
