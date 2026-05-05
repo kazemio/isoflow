@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Dices, Eye } from "lucide-react";
 
 const NOTES = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"];
+const SHOW_DEBUG = false;
 
 
 function getChordName(symbol, tones) {
@@ -1133,19 +1134,21 @@ function App() {
           </div>
         )}
 
-        <div className="debug-midi">
-          {midiHeldCells.length > 0
-            ? [...midiHeldCells]
-                .map((c) => withMidi(c))
-                .sort((a, b) => (a.midi || 0) - (b.midi || 0))
-                .map((c) => {
-                  const octave = c.midi != null ? Math.floor(c.midi / 12) - 1 : "";
-                  const midiNum = c.midi != null ? ` (${c.midi})` : "";
-                  return `${c.note}${octave}${midiNum}`;
-                })
-                .join(" · ")
-            : "—"}
-        </div>
+        {SHOW_DEBUG && (
+          <div className="debug-midi">
+            {midiHeldCells.length > 0
+              ? [...midiHeldCells]
+                  .map((c) => withMidi(c))
+                  .sort((a, b) => (a.midi || 0) - (b.midi || 0))
+                  .map((c) => {
+                    const octave = c.midi != null ? Math.floor(c.midi / 12) - 1 : "";
+                    const midiNum = c.midi != null ? ` (${c.midi})` : "";
+                    return `${c.note}${octave}${midiNum}`;
+                  })
+                  .join(" · ")
+              : "—"}
+          </div>
+        )}
 
       </section>
     </main>
