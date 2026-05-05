@@ -627,6 +627,12 @@ function App() {
 
     if (stage.key === "MOVE_GUIDES") {
       const current = activeSelection();
+      
+      // If we are still holding the correct guides for the STARTING chord, stay silent.
+      // We wait for the user to move towards the destination guides.
+      if (samePitchSet(current, fromChord.guide)) {
+        return false;
+      }
       const correctNotes = samePitchSet(current, toChord.guide);
 
       if (midiPlayMode) {
@@ -805,7 +811,22 @@ function App() {
     setPendingDestination(null);
     setTransitionSummary(null);
     setAwaitingNextRound(false);
-    setStageIndex(0);
+
+    // Play mode seamless transition:
+    // If the user is still holding the notes that now form the new "source" chord,
+    // jump straight to the "destination" stage (3) without flashing Stage 1 again.
+    if (mode === "play" && midiPlayMode) {
+      const nextPair = progression[(pairIndex + 1) % progression.length];
+      const current = activeSelection();
+      const isCorrectSource = current.length === 4 && samePitchSet(current, nextPair.from.tones);
+      if (isCorrectSource) {
+        setStageIndex(3);
+      } else {
+        setStageIndex(0);
+      }
+    } else {
+      setStageIndex(0);
+    }
     
     // MIDI: carry over all physically held notes into the new round's Step 2 (IDENTIFY_GUIDES).
     if (midiPlayMode) {
@@ -940,7 +961,9 @@ function App() {
   const currentSelection = activeSelection();
   const displaySelection = stage.key === "FILL_CHORD" ? [...movedGuides, ...selected] : currentSelection;
   const selectionText = displaySelection.map((c) => c.note).join(" ") || "—";
-  const canAdvance = awaitingNextRound || currentSelection.length === maxSelectionsForStage();
+  const isMovingStage = stage.key === "MOVE_GUIDES";
+  const hasInputMoved = isMovingStage ? !samePitchSet(currentSelection, fromChord.guide) : true;
+  const canAdvance = awaitingNextRound || (currentSelection.length === maxSelectionsForStage() && hasInputMoved);
 
   // MIDI mode: hold correct notes for 0.5s to register, then flash for 0.5s before advancing.
   // eslint-disable-next-line react-hooks/rules-of-hooks
