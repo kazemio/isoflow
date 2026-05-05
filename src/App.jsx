@@ -32,28 +32,11 @@ const PROGRESSION_OPTIONS = {
   "I–vi–IV–V": ["I", "vi", "IV", "V"],
   "I–IV–V–I": ["I", "IV", "V", "I"]
 };
-
 const STAGES = [
-  {
-    key: "START_CHORD",
-    title: "Build starting chord.",
-    instruction: "Select all four notes of the current chord."
-  },
-  {
-    key: "IDENTIFY_GUIDES",
-    title: "Identify guide tones.",
-    instruction: "From that voicing, select the 3rd and 7th only."
-  },
-  {
-    key: "MOVE_GUIDES",
-    title: "Move guide tones.",
-    instruction: "Transform each guide tone into the next chord. A voice may stay put if it is already correct."
-  },
-  {
-    key: "FILL_CHORD",
-    title: "Fill destination chord.",
-    instruction: "The guide tones are already part of the chord. Add the remaining two chord tones."
-  }
+  { key: "START_CHORD", title: "Build starting chord." },
+  { key: "IDENTIFY_GUIDES", title: "Identify guide tones." },
+  { key: "MOVE_GUIDES", title: "Move guide tones." },
+  { key: "FILL_CHORD", title: "Fill destination chord." }
 ];
 
 function normalizeNote(index) {
@@ -278,6 +261,7 @@ function App() {
   const GRID = useMemo(() => buildGrid(8, 8, 6), []);
 
   const [viewMode, setViewMode] = useState("grid");
+  const [mode, setMode] = useState("learn"); // "learn" | "play"
   const [keyCenter, setKeyCenter] = useState("C");
   const [customText, setCustomText] = useState("ii V I");
 
@@ -331,6 +315,10 @@ function App() {
       ? fromChord.guide
       : toChord.guide;
 
+  const displayTitle = (mode === "play" && stage.key === "FILL_CHORD")
+    ? `Voice lead: ${fromSymbol} → ${toSymbol}`
+    : stage.title;
+
   function resetAll(nextKey = keyCenter) {
     setKeyCenter(nextKey);
     setPairIndex(0);
@@ -348,6 +336,7 @@ function App() {
   }
 
   function activeSelection() {
+    if (midiPlayMode) return midiHeldCells;
     if (stage.key === "START_CHORD") return startVoicing;
     if (stage.key === "IDENTIFY_GUIDES") return startGuides;
     if (stage.key === "MOVE_GUIDES") return movedGuides;
@@ -364,7 +353,7 @@ function App() {
   function maxSelectionsForStage() {
     if (stage.key === "START_CHORD") return 4;
     if (stage.key === "IDENTIFY_GUIDES") return 2;
-    if (stage.key === "MOVE_GUIDES") return 2;
+    if (stage.key === "FILL_CHORD") return 4;
     return 2;
   }
 
@@ -459,6 +448,13 @@ function App() {
     if (stage.key === "MOVE_GUIDES" && startGuides.length > 0) {
       return cellsWithNote
         .map((c) => ({ c, d: Math.min(...startGuides.map((sg) => distance(sg, c))) }))
+        .sort((a, b) => a.d - b.d)[0].c;
+    }
+
+    // Play mode FILL_CHORD: prefer proximity to source voicing for smooth grid mapping.
+    if (mode === "play" && stage.key === "FILL_CHORD" && startVoicing.length > 0) {
+      return cellsWithNote
+        .map((c) => ({ c, d: Math.min(...startVoicing.map((sv) => distance(sv, c))) }))
         .sort((a, b) => a.d - b.d)[0].c;
     }
 
@@ -596,7 +592,8 @@ function App() {
 
   function checkStage() {
     if (stage.key === "START_CHORD") {
-      const ok = samePitchSet(startVoicing, fromChord.tones);
+      const current = activeSelection();
+      const ok = current.length === 4 && samePitchSet(current, fromChord.tones);
       setFeedback(ok
         ? { type: "good", title: "Starting chord identified.", body: "Now identify its guide tones: the 3rd and 7th." }
         : { type: "bad", title: "Not the starting chord.", body: `Expected ${fromSymbol} in ${keyCenter}: ${fromChord.tones.join(" · ")}` }
@@ -605,7 +602,8 @@ function App() {
     }
 
     if (stage.key === "IDENTIFY_GUIDES") {
-      const selectedInsideVoicing = startGuides.every((cell) => {
+      const current = activeSelection();
+      const selectedInsideVoicing = current.every((cell) => {
         const cellMidi = withMidi(cell).midi;
         return startVoicing.some((v) => {
           if (v.id === cell.id) return true;
@@ -613,7 +611,7 @@ function App() {
           return vMidi != null && vMidi === cellMidi;
         });
       });
-      const ok = selectedInsideVoicing && samePitchSet(startGuides, fromChord.guide);
+      const ok = selectedInsideVoicing && current.length === 2 && samePitchSet(current, fromChord.guide);
       setFeedback(ok
         ? { type: "good", title: "Guide tones found.", body: `${fromSymbol} guide tones: ${fromChord.guide.join(" and ")}.` }
         : {
@@ -628,7 +626,8 @@ function App() {
     }
 
     if (stage.key === "MOVE_GUIDES") {
-      const correctNotes = samePitchSet(movedGuides, toChord.guide);
+      const current = activeSelection();
+      const correctNotes = samePitchSet(current, toChord.guide);
 
       if (midiPlayMode) {
         if (!correctNotes) {
@@ -636,24 +635,20 @@ function App() {
           return false;
         }
 
-        // Semitone-distance check: use exact MIDI numbers for voice leading.
         const sgWithMidi = startGuides.map((c) => withMidi(c));
-        const mgWithMidi = movedGuides.map((c) => withMidi(c));
+        const mgWithMidi = current.map((c) => withMidi(c));
         const mapping = sgWithMidi.length === 2 && mgWithMidi.length === 2
           ? bestMapping(sgWithMidi, mgWithMidi) : null;
 
-        // Thresholds: maxJump of 6 semitones (tritone) is the limit for "smooth".
-        // total of 3 semitones is "optimal".
         const ok = mapping !== null && mapping.maxJump <= 6;
         const stayed = mapping?.pairs.filter((p) => p.from.midi === p.to.midi).length ?? 0;
         const stayText = stayed > 0 ? ` ${stayed} voice${stayed === 1 ? "" : "s"} stayed put.` : "";
         
         setFeedback(ok
           ? { type: mapping.total <= 3 ? "good" : "okay",
-              title: mapping.total <= 3 ? "Guide tones moved optimally." : "Correct, slightly more movement.",
-              body: `Movement: ${mapping.total} semitones.${stayText}` }
-          : { type: "bad", title: "Too much motion.",
-              body: `Leap of ${mapping.maxJump} semitones is too large for smooth leading.` }
+              title: mapping.total <= 3 ? "Optimal movement!" : "Smooth movement.", 
+              body: `Total motion: ${mapping.total} semitones.${stayText}` }
+          : { type: "bad", title: "Too much motion.", body: `Leap of ${mapping.maxJump} semitones is too large.` }
         );
         return ok;
       }
@@ -692,28 +687,40 @@ function App() {
     }
 
     if (stage.key === "FILL_CHORD") {
-      const combined = [...movedGuides, ...selected];
+      const current = activeSelection();
+      const combined = mode === "play" ? current : [...movedGuides, ...selected];
       const pitchOk =
         combined.length === 4 &&
-        samePitchSet(combined, toChord.tones) &&
-        containsPitchSet(combined, movedGuides.map((c) => c.note));
+        samePitchSet(combined, toChord.tones);
 
       if (pitchOk && midiPlayMode) {
-        // Octave check: added notes must be within an octave of at least one guide tone.
-        const guideMidis = movedGuides.map((c) => withMidi(c).midi).filter((m) => m != null);
-        const registerOk = selected.every((c) => {
-          const m = withMidi(c).midi;
-          return m == null || guideMidis.some((gm) => Math.abs(m - gm) <= 12);
-        });
-        if (!registerOk) {
-          setFeedback({ type: "bad", title: "Notes too far from guide tones.",
-            body: "Keep the remaining chord tones in the same register." });
-          return false;
+        if (mode === "play") {
+          // Play mode voice-leading: check whole chord move (4 voices)
+          const sMidi = startVoicing.map((c) => withMidi(c));
+          const tMidi = combined.map((c) => withMidi(c));
+          const mapping = bestMapping(sMidi, tMidi);
+          const ok = mapping !== null && mapping.maxJump <= 7;
+          if (!ok) {
+            setFeedback({ type: "bad", title: "Too much motion.", body: `Leap of ${mapping.maxJump} semitones is too large.` });
+            return false;
+          }
+        } else {
+          // Learn mode: check remaining chord tones register
+          const currentTones = midiPlayMode ? current : selected;
+          const guideMidis = movedGuides.map((c) => withMidi(c).midi).filter((m) => m != null);
+          const registerOk = currentTones.every((c) => {
+            const m = withMidi(c).midi;
+            return m == null || guideMidis.some((gm) => Math.abs(m - gm) <= 12);
+          });
+          if (!registerOk) {
+            setFeedback({ type: "bad", title: "Notes too far from guide tones.",
+              body: "Keep the remaining chord tones in the same register." });
+            return false;
+          }
         }
       }
 
       const ok = pitchOk;
-
       if (ok) {
         const completedDestination = combined;
         setPendingDestination(completedDestination);
@@ -724,10 +731,11 @@ function App() {
         setFeedback({
           type: "bad",
           title: "Chord not complete.",
-          body: `Expected ${toSymbol} in ${keyCenter}: ${toChord.tones.join(" · ")}. The orange guide tones are already included; add the other two tones.`
+          body: mode === "play"
+            ? `Expected ${toSymbol} in ${keyCenter}: ${toChord.tones.join(" · ")}.`
+            : `Expected ${toSymbol} in ${keyCenter}: ${toChord.tones.join(" · ")}. The orange guide tones are already included; add the other two tones.`
         });
       }
-
       return ok;
     }
 
@@ -742,8 +750,9 @@ function App() {
         .map((id) => allCells.find((c) => c.id === id))
         .filter(Boolean);
       
+      setStartVoicing(newStartGuides);
       setStartGuides(newStartGuides);
-      setStageIndex(1);
+      setStageIndex(mode === "play" ? 3 : 1);
     } else if (stage.key === "IDENTIFY_GUIDES") {
       const currentPressed = Object.values(midiPressedRef.current);
       const allCells = [...GRID.flat(), ...PIANO_CELLS];
@@ -770,7 +779,13 @@ function App() {
   function advance(checkOnly = false) {
     if (awaitingNextRound) { startNextRound(); return true; }
     const ok = checkStage();
-    if (ok && !checkOnly) advanceStage();
+    if (ok && !checkOnly) {
+      if (stage.key === "FILL_CHORD") {
+        startNextRound();
+      } else {
+        advanceStage();
+      }
+    }
     return ok;
   }
 
@@ -790,7 +805,7 @@ function App() {
     setPendingDestination(null);
     setTransitionSummary(null);
     setAwaitingNextRound(false);
-    setStageIndex(1);
+    setStageIndex(0);
     
     // MIDI: carry over all physically held notes into the new round's Step 2 (IDENTIFY_GUIDES).
     if (midiPlayMode) {
@@ -804,13 +819,10 @@ function App() {
       setStartGuides(newStartGuides);
     }
     
-    // Sync the registry with current physical state to preserve the 
-    // exact octaves of all currently held notes across the transition.
-    const syncedRegistry = {};
+    // Sync the registry with current physical state.
     Object.entries(midiPressedRef.current).forEach(([note, id]) => {
-      syncedRegistry[id] = parseInt(note);
+      midiNoteRegistryRef.current[id] = parseInt(note);
     });
-    midiNoteRegistryRef.current = syncedRegistry;
 
     registerAnchorRef.current = null;
   }
@@ -936,17 +948,27 @@ function App() {
     if (!midiPlayMode || !canAdvance) return;
     
     const timer = setTimeout(() => {
-      // Step 1: Must hold for 500ms to register.
       const ok = advanceRef.current?.(true);
       if (ok) {
-        // Step 2: Correct! Show green flash/feedback for 500ms then advance.
         setTimeout(() => {
           advanceRef.current?.(false);
         }, 500);
       }
     }, 500);
     return () => clearTimeout(timer);
-  }, [midiPlayMode, canAdvance]);
+  }, [midiPlayMode, canAdvance, stageIndex, awaitingNextRound, midiHeldCells]); 
+
+  // Play mode: if we let go of all notes, reset to Step 1.
+  useEffect(() => {
+    if (mode === "play" && !awaitingNextRound) {
+      if (midiHeldCells.length === 0 && stageIndex !== 0) {
+        setStageIndex(0);
+        setSelected([]);
+        setStartVoicing([]);
+        setFeedback(null);
+      }
+    }
+  }, [mode, stageIndex, midiHeldCells, awaitingNextRound]);
 
   // Mouse mode: auto-check when selection is complete, then advance or clear.
   // eslint-disable-next-line react-hooks/rules-of-hooks
@@ -982,6 +1004,7 @@ function App() {
               ))}
             </select>
           </label>
+
 
           <label className="ctrl-prog">
             Progression
@@ -1059,32 +1082,53 @@ function App() {
           </label>
         </div>
 
-        <div className={`step-row${feedback && !awaitingNextRound ? ` step-${feedback.type}` : awaitingNextRound ? " step-good" : ""}`}>
-          <div className="flow-strip">
-            {STAGES.map((item, index) => (
-              <div key={item.key} className={index === stageIndex ? "flow-step active" : index < stageIndex ? "flow-step done" : "flow-step"} />
-            ))}
+        <div className="mode-row">
+          <label className="ctrl-mode">
+            <div className="seg-control" style={{ "--seg-x": mode === "play" ? 1 : 0 }}>
+              <button
+                type="button"
+                className={mode === "learn" ? "seg-option active" : "seg-option"}
+                onClick={() => { setMode("learn"); setStageIndex(0); }}
+              >Learn</button>
+              <button
+                type="button"
+                className={mode === "play" ? "seg-option active" : "seg-option"}
+                onClick={() => { setMode("play"); setStageIndex(0); }}
+              >Play</button>
+            </div>
+          </label>
+        </div>
+
+
+        <div className={`step-row mode-${mode}${feedback && !awaitingNextRound && (mode === "learn" || feedback.type === "good") ? ` step-${feedback.type}` : awaitingNextRound ? " step-good" : ""}`}>
+          <div className="flow-strip" style={{ visibility: mode === "learn" ? "visible" : "hidden" }}>
+            {STAGES.map((item, index) => {
+              const actualIndex = STAGES.indexOf(item);
+              const isActive = actualIndex === stageIndex;
+              const isDone = actualIndex < stageIndex;
+              return <div key={item.key} className={isActive ? "flow-step active" : isDone ? "flow-step done" : "flow-step"} />;
+            })}
           </div>
-          <div className="step-line fade-in" key={feedback?.title || transitionSummary || stage.title}>
+          <div className="step-line fade-in" key={feedback?.title || transitionSummary || stage.title} style={{ visibility: mode === "learn" ? "visible" : "hidden" }}>
             <span className="step-text">
               {feedback && !awaitingNextRound
                 ? feedback.title
                 : awaitingNextRound
                   ? transitionSummary || "Transition complete"
-                  : stage.title}
+                  : displayTitle}
             </span>
           </div>
           <div className="chord-line">
             <span className="chord-unit">
               <strong>{fromSymbol}</strong>
               <span className="chord-unit-name">{getChordName(fromSymbol, fromChord.tones)}</span>
-              <span className="chord-unit-notes">{fromChord.tones.join(" · ")}</span>
+              {mode === "learn" && <span className="chord-unit-notes">{fromChord.tones.join(" · ")}</span>}
             </span>
             <span className="chord-sep">→</span>
             <span className="chord-unit">
               <strong>{toSymbol}</strong>
               <span className="chord-unit-name">{getChordName(toSymbol, toChord.tones)}</span>
-              <span className="chord-unit-notes">{toChord.tones.join(" · ")}</span>
+              {mode === "learn" && <span className="chord-unit-notes">{toChord.tones.join(" · ")}</span>}
             </span>
           </div>
         </div>
@@ -1136,6 +1180,13 @@ function App() {
 
         {SHOW_DEBUG && (
           <div className="debug-midi">
+            <div style={{ marginBottom: '6px', fontSize: '11px', fontWeight: '700', color: '#111' }}>
+              STAGE: {stage.key} {startVoicing.length > 0 && 
+                <span style={{ fontWeight: '400', opacity: 0.6, marginLeft: '8px' }}>
+                  (Ref: {startVoicing.map(c => `${c.note}${withMidi(c).midi != null ? Math.floor(withMidi(c).midi / 12) - 1 : ''}`).join(" ")})
+                </span>
+              }
+            </div>
             {midiHeldCells.length > 0
               ? [...midiHeldCells]
                   .map((c) => withMidi(c))
@@ -1147,6 +1198,17 @@ function App() {
                   })
                   .join(" · ")
               : "—"}
+            
+            {mode === "play" && startVoicing.length === 4 && midiHeldCells.length === 4 && (
+              <div style={{ marginTop: '5px', fontSize: '10px', color: '#7c7c82' }}>
+                {(() => {
+                  const sMidi = startVoicing.map((c) => withMidi(c));
+                  const tMidi = midiHeldCells.map((c) => withMidi(c));
+                  const m = bestMapping(sMidi, tMidi);
+                  return m ? `Motion: Max=${m.maxJump}, Total=${m.total}` : "No Mapping Found";
+                })()}
+              </div>
+            )}
           </div>
         )}
 

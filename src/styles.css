@@ -29,7 +29,7 @@ button {
 
 .app-shell {
   min-height: 100vh;
-  padding: 42px;
+  padding: 16px;
   display: flex;
   justify-content: center;
   align-items: flex-start;
@@ -40,7 +40,7 @@ button {
 
 .panel {
   width: min(1180px, 100%);
-  padding: 28px;
+  padding: 12px;
 }
 
 .eyebrow {
@@ -88,7 +88,7 @@ h2 {
   display: grid;
   grid-template-columns: 190px 1fr 150px;
   gap: 18px;
-  margin: 28px 0 18px;
+  margin: 12px 0 12px;
 }
 
 label {
@@ -143,7 +143,6 @@ select {
 .flow-strip {
   display: flex;
   gap: 12px;
-  margin-bottom: 8px;
 }
 
 .flow-step {
@@ -291,8 +290,8 @@ button:disabled {
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 5px;
-  margin-bottom: 14px;
+  gap: 12px;
+  margin-bottom: 8px;
   overflow-x: auto;
 }
 
@@ -400,6 +399,27 @@ button:disabled {
   grid-template-columns: auto 150px 1fr 90px 90px 1fr 160px;
 }
 
+.mode-row {
+  display: flex;
+  justify-content: center;
+  padding: 0 40px;
+  margin-top: 6px;
+  margin-bottom: 12px;
+}
+
+.ctrl-mode {
+  width: 160px;
+}
+
+/* Instant visibility for Play mode transitions */
+.step-row.mode-play .flow-step,
+.step-row.mode-play .step-line {
+  transition: none !important;
+  animation: none !important;
+}
+
+
+
 .ctrl-random {
 }
 
@@ -444,6 +464,7 @@ button:disabled {
   .ctrl-view {
     grid-area: view;
   }
+
 
   .controls.key-controls .brand {
     grid-area: brand;
