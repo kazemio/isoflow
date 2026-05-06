@@ -3,7 +3,7 @@ import { Dices, Eye } from "lucide-react";
 import { scoreVoiceLeadingTransition } from "./voiceLeadingScore";
 
 const NOTES = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"];
-const SHOW_DEBUG = true;
+const SHOW_DEBUG = false;
 
 
 function getChordName(symbol, tones) {
@@ -585,7 +585,7 @@ function App() {
       const ok = current.length === 4 && samePitchSet(current, fromChord.tones);
       setFeedback(ok
         ? { type: "good", title: "Starting chord identified.", body: "Now identify its guide tones: the 3rd and 7th." }
-        : { type: "bad", title: "Not the starting chord.", body: `Expected ${fromSymbol} in ${keyCenter}: ${fromChord.tones.join(" · ")}` }
+        : { type: "bad", title: "Not the starting chord.", body: `Expected ${fromSymbol} in ${keyCenter}: ${fromChord.tones.join(" · ")}.` }
       );
       return ok;
     }
@@ -602,13 +602,14 @@ function App() {
       });
       const ok = selectedInsideVoicing && current.length === 2 && samePitchSet(current, fromChord.guide);
       setFeedback(ok
-        ? { type: "good", title: "Guide tones found.", body: `${fromSymbol} guide tones: ${fromChord.guide.join(" and ")}.` }
+        ? { type: "good", title: "Nice.", body: `${fromSymbol} guide tones: ${fromChord.guide.join(" and ")}.` }
         : {
             type: "bad",
             title: "Wrong guide tones.",
             body: selectedInsideVoicing
-              ? `The guide tones are the 3rd and 7th: ${fromChord.guide.join(" · ")}`
+              ? `The guide tones are the 3rd and 7th: ${fromChord.guide.join(" · ")}.`
               : "Guide tones must come from the starting voicing you just built."
+
           }
       );
       return ok;
@@ -630,21 +631,89 @@ function App() {
           return false;
         }
 
-        const sgWithMidi = startGuides.map((c) => withMidi(c));
-        const mgWithMidi = current.map((c) => withMidi(c));
-        const mapping = sgWithMidi.length === 2 && mgWithMidi.length === 2
-          ? bestMapping(sgWithMidi, mgWithMidi) : null;
+        // Build note-name-aware pairs: match by same note first (common tones),
+        // then pair the remaining voices. This avoids MIDI-estimation errors from
+        // re-applied cells whose registry value may be stale.
+        const sg = startGuides.map(withMidi);
+        const mg = current.map(withMidi);
+        let mapping = null;
+        if (sg.length === 2 && mg.length === 2) {
+          const unmatched = [...mg];
+          const pairs = [];
+          // First pass: same note name (common tone or correct resolution by name)
+          for (const from of sg) {
+            const idx = unmatched.findIndex((t) => t.note === from.note);
+            if (idx >= 0) { pairs.push({ from, to: unmatched.splice(idx, 1)[0] }); }
+          }
+          // Second pass: remaining voices by MIDI proximity
+          const leftFrom = sg.filter((f) => !pairs.find((p) => p.from.id === f.id));
+          for (const from of leftFrom) {
+            const fMidi = from.midi ?? 0;
+            unmatched.sort((a, b) => Math.abs((a.midi ?? 0) - fMidi) - Math.abs((b.midi ?? 0) - fMidi));
+            if (unmatched.length) pairs.push({ from, to: unmatched.shift() });
+          }
+          if (pairs.length === 2) {
+            const dists = pairs.map((p) => {
+              const a = p.from.midi, b = p.to.midi;
+              return a != null && b != null ? Math.abs(a - b) : distance(p.from, p.to);
+            });
+            mapping = {
+              pairs: pairs.map((p, i) => ({ ...p, distance: dists[i] })),
+              total: dists.reduce((s, d) => s + d, 0),
+              maxJump: Math.max(...dists),
+            };
+          }
+        }
 
-        const ok = mapping !== null && mapping.maxJump <= 6;
+        // Strict: each guide tone must stay (0) or move by step (≤ 2 semitones).
+        const ok = mapping !== null && mapping.maxJump <= 2;
         const stayed = mapping?.pairs.filter((p) => p.from.midi === p.to.midi).length ?? 0;
-        const stayText = stayed > 0 ? ` ${stayed} voice${stayed === 1 ? "" : "s"} stayed put.` : "";
-        
-        setFeedback(ok
-          ? { type: mapping.total <= 3 ? "good" : "okay",
-              title: mapping.total <= 3 ? "Optimal movement!" : "Smooth movement.", 
-              body: `Total motion: ${mapping.total} semitones.${stayText}` }
-          : { type: "bad", title: "Too much motion.", body: `Leap of ${mapping.maxJump} semitones is too large.` }
-        );
+        const stayText = stayed > 0 ? ` ${stayed} stayed put.` : "";
+
+        if (!ok) {
+          const badPair = mapping?.pairs.find((p) => Math.abs((p.from.midi ?? 0) - (p.to.midi ?? 0)) > 2);
+          if (badPair) {
+            const octave = (m) => m != null ? Math.floor(m / 12) - 1 : "";
+            const fromLabel = `${badPair.from.note}${octave(badPair.from.midi)}`;
+            const toLabel   = `${badPair.to.note}${octave(badPair.to.midi)}`;
+            const interval  = Math.abs((badPair.from.midi ?? 0) - (badPair.to.midi ?? 0));
+            const direction = (badPair.to.midi ?? 0) > (badPair.from.midi ?? 0) ? "up" : "down";
+            // Find the correct target: nearest destination guide tone to the source note
+            const fromMidi = badPair.from.midi ?? 60;
+            const sourceOctave = Math.floor(fromMidi / 12) - 1;
+            const correctTarget = toChord.guide
+              .flatMap((n) => [-12, 0, 12].map((offset) => {
+                const pc = ((NOTES.indexOf(n) - fromMidi % 12 + 12) % 12);
+                return { note: n, midi: fromMidi + pc + offset };
+              }))
+              .filter((t) => t.midi > 0 && t.midi < 128)
+              .sort((a, b) => {
+                const dA = Math.abs(a.midi - fromMidi);
+                const dB = Math.abs(b.midi - fromMidi);
+                if (dA !== dB) return dA - dB;
+                // Tie-break: prefer same octave as source note
+                const sameA = (Math.floor(a.midi / 12) - 1) === sourceOctave ? 0 : 1;
+                const sameB = (Math.floor(b.midi / 12) - 1) === sourceOctave ? 0 : 1;
+                return sameA - sameB;
+              })[0];
+            const correctLabel = correctTarget
+              ? `${correctTarget.note}${octave(correctTarget.midi)}`
+              : toChord.guide.join(" or ");
+            const isCommonTone = correctTarget && correctTarget.midi === fromMidi;
+            const suggestion = isCommonTone ? `stay on ${fromLabel}` : `try ${correctLabel}`;
+            setFeedback({ type: "bad", title: `${fromLabel} jumped ${interval} semitone${interval !== 1 ? "s" : ""} ${direction} to ${toLabel} — ${suggestion}.` });
+          } else {
+            setFeedback({ type: "bad", title: "Guide tone moved too far.", body: "Each guide tone must stay or move by step (half or whole)." });
+          }
+          return false;
+        }
+
+        const rating = mapping.total <= 1 ? "optimal" : mapping.total <= 3 ? "good" : "could be improved";
+        setFeedback({
+          type: rating === "optimal" ? "good" : "okay",
+          title: rating === "optimal" ? "Optimal movement." : rating === "good" ? "Good movement." : "Correct — could be tighter.",
+          body: `Guide tones resolved correctly.${stayText} Total: ${mapping.total} semitone${mapping.total !== 1 ? "s" : ""}.`,
+        });
         return ok;
       }
 
@@ -673,7 +742,7 @@ function App() {
             type: "bad",
             title: correctNotes ? "Correct notes, but too much motion." : "Wrong destination guide tones.",
             body: correctNotes
-              ? `Movement ${mapping?.total.toFixed(1)}. Best possible ${optimal?.total.toFixed(1)}. Remember: a guide tone can stay if it is already in the next guide-tone set.`
+              ? `Movement ${mapping?.total.toFixed(1)}. Best possible ${optimal?.total.toFixed(1)}. A guide tone can stay if it is already in the next guide-tone set.`
               : `For ${toSymbol} in ${keyCenter}, guide tones are: ${toChord.guide.join(" · ")}. One voice may stay if already correct.`
           }
       );
@@ -688,6 +757,7 @@ function App() {
         combined.length === 4 &&
         samePitchSet(combined, toChord.tones);
 
+      let widerVoicing = false;
       if (pitchOk && midiPlayMode) {
         if (mode === "play") {
           // Play mode voice-leading: check whole chord move (4 voices)
@@ -699,18 +769,17 @@ function App() {
             setFeedback({ type: "bad", title: "Too much motion.", body: `Leap of ${mapping.maxJump} semitones is too large.` });
             return false;
           }
-        } else {
-          // Learn mode: check remaining chord tones register
-          const currentTones = midiPlayMode ? current : selected;
-          const guideMidis = movedGuides.map((c) => withMidi(c).midi).filter((m) => m != null);
-          const registerOk = currentTones.every((c) => {
+        }
+        // Always check non-guide tone register regardless of mode
+        const guideMidis = movedGuides.map((c) => withMidi(c).midi).filter((m) => m != null);
+        const extraTones = selected.length > 0 ? selected : current;
+        if (guideMidis.length > 0) {
+          const registerOk = extraTones.every((c) => {
             const m = withMidi(c).midi;
             return m == null || guideMidis.some((gm) => Math.abs(m - gm) <= 12);
           });
           if (!registerOk) {
-            setFeedback({ type: "bad", title: "Notes too far from guide tones.",
-              body: "Keep the remaining chord tones in the same register." });
-            return false;
+            widerVoicing = true;
           }
         }
       }
@@ -720,7 +789,9 @@ function App() {
         const completedDestination = combined;
         setPendingDestination(completedDestination);
         setAwaitingNextRound(true);
-        setTransitionSummary(`✓ ${toSymbol} complete`);
+        setTransitionSummary(widerVoicing
+          ? "Wider voicing than ideal."
+          : "Smooth.");
         setFeedback(null);
       } else {
         setFeedback({
@@ -774,17 +845,21 @@ function App() {
   function advance(checkOnly = false) {
     if (awaitingNextRound) {
       if (!checkOnly) {
-        if (midiPlayMode && stage.key === "FILL_CHORD") {
+        if (SHOW_DEBUG && midiPlayMode && stage.key === "FILL_CHORD") {
           const sMidi = startVoicing.map((c) => withMidi(c).midi).filter(m => m != null);
           const tMidi = activeSelection().map((c) => withMidi(c).midi).filter(m => m != null);
           if (sMidi.length === 4 && tMidi.length === 4) {
-            const score = scoreVoiceLeadingTransition(
-              sMidi, tMidi,
-              toChord.tones.map(t => NOTES.indexOf(t)),
-              fromChord.tones.map(t => NOTES.indexOf(t)),
-              toChord.tones.map(t => NOTES.indexOf(t))
-            );
-            setVlScore(score);
+            try {
+              const score = scoreVoiceLeadingTransition(
+                sMidi, tMidi,
+                toChord.tones.map(t => NOTES.indexOf(t)),
+                fromChord.tones.map(t => NOTES.indexOf(t)),
+                toChord.tones.map(t => NOTES.indexOf(t))
+              );
+              setVlScore(score);
+            } catch (e) {
+              console.warn('scoreVoiceLeadingTransition failed:', e);
+            }
           }
         }
         startNextRound();
@@ -985,9 +1060,9 @@ function App() {
       if (ok) {
         setTimeout(() => {
           advanceRef.current?.(false);
-        }, 500);
+        }, 750);
       }
-    }, 500);
+    }, 750);
     return () => clearTimeout(timer);
   }, [midiPlayMode, canAdvance, stageIndex, awaitingNextRound]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1008,7 +1083,7 @@ function App() {
   useEffect(() => {
     if (midiPlayMode || awaitingNextRound || !canAdvance) return;
     const ok = checkStage();
-    const timer = setTimeout(() => { if (ok) advanceStage(); else clearCurrentStage(); }, 500);
+    const timer = setTimeout(() => { if (ok) advanceStage(); else clearCurrentStage(); }, 750);
     return () => clearTimeout(timer);
   }, [canAdvance, midiPlayMode, awaitingNextRound]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1016,7 +1091,7 @@ function App() {
   // eslint-disable-next-line react-hooks/rules-of-hooks
   useEffect(() => {
     if (!awaitingNextRound) return;
-    const timer = setTimeout(() => startNextRound(), 500);
+    const timer = setTimeout(() => startNextRound(), 750);
     return () => clearTimeout(timer);
   }, [awaitingNextRound]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1047,14 +1122,22 @@ function App() {
     const optimalDistance = optimal?.total ?? null;
     const excessDistance  = optimalDistance != null ? userDistance - optimalDistance : null;
 
+    const guideResult = mapping.maxJump <= 2 ? "correct" : "incorrect — guide tone violation";
+    const rating = mapping.maxJump > 2 ? null :
+                   mapping.total <= 1  ? "optimal" :
+                   mapping.total <= 3  ? "good"    : "could be improved";
+
     setVlScore({
       userDistance,
       optimalDistance,
       excessDistance,
-      message: mapping.maxJump <= 1 ? "✓ minimal movement" :
-               mapping.maxJump <= 2 ? "✓ close voicing"    :
-               mapping.maxJump <= 4 ? "△ wider movement"   :
-                                      "✗ too much motion",
+      result: guideResult,
+      rating,
+      message: guideResult === "correct"
+        ? (rating === "optimal" ? "Optimal — guide tones resolved by step or stayed." :
+           rating === "good"    ? "Good — guide tones correct, slight extra motion." :
+                                  "Correct — consider tighter voice leading.")
+        : `✗ Guide tone leap of ${mapping.maxJump} semitone${mapping.maxJump !== 1 ? "s" : ""} — must stay or move by step.`,
     });
   }, [stage.key, movedGuides, startGuides]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -1171,7 +1254,7 @@ function App() {
         </div>
 
 
-        <div className={`step-row mode-${mode}${feedback && !awaitingNextRound && (mode === "learn" || feedback.type === "good") ? ` step-${feedback.type}` : awaitingNextRound ? " step-good" : ""}`}>
+        <div className={`step-row mode-${mode}${feedback && !awaitingNextRound && (mode === "learn" || feedback.type === "good") ? ` step-${feedback.type}` : awaitingNextRound ? (transitionSummary?.includes("wider voicing") ? " step-okay" : " step-good") : ""}`}>
           <div className="flow-strip" style={{ visibility: mode === "learn" ? "visible" : "hidden" }}>
             {STAGES.map((item, index) => {
               const actualIndex = STAGES.indexOf(item);
@@ -1282,11 +1365,15 @@ function App() {
             )}
             {vlScore && (
               <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #eee', fontSize: '10px' }}>
-                <div style={{ fontWeight: '700', color: '#111', marginBottom: '2px' }}>VOICE LEADING</div>
-                <div>User Distance: {vlScore.userDistance}</div>
-                <div>Optimal: {vlScore.optimalDistance}</div>
-                <div>Excess: {vlScore.excessDistance}</div>
-                <div style={{ marginTop: '2px', fontWeight: '700' }}>{vlScore.message}</div>
+                <div style={{ fontWeight: '700', color: '#111', marginBottom: '4px' }}>VOICE LEADING</div>
+                <div style={{ color: vlScore.result === 'correct' ? '#14532d' : '#7f1d1d', fontWeight: '700', marginBottom: '2px' }}>
+                  {vlScore.result}
+                </div>
+                {vlScore.rating && (
+                  <div style={{ color: '#555', marginBottom: '4px' }}>Rating: {vlScore.rating}</div>
+                )}
+                <div>User: {vlScore.userDistance} · Optimal: {vlScore.optimalDistance ?? '—'} · Excess: {vlScore.excessDistance ?? '—'}</div>
+                <div style={{ marginTop: '4px', fontStyle: 'italic', color: '#444' }}>{vlScore.message}</div>
               </div>
             )}
           </div>

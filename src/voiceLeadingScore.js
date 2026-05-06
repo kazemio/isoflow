@@ -120,9 +120,12 @@ export function scoreVoiceLeadingTransition(
   // 2. User distance
   const { total: userDistance } = calculateDistance(sourceMidiNotes, userDestinationMidiNotes);
 
-  // 3. Generate optimal candidates
-  const rangeMin = Math.min(...sourceMidiNotes) - 12;
-  const rangeMax = Math.max(...sourceMidiNotes) + 12;
+  // 3. Generate optimal candidates — clamp range to 2 octaves to prevent
+  //    exponential blowup when the source voicing spans a wide register.
+  const MAX_RANGE = 24;
+  const sourceMid = (Math.min(...sourceMidiNotes) + Math.max(...sourceMidiNotes)) / 2;
+  const rangeMin = Math.round(sourceMid - MAX_RANGE / 2);
+  const rangeMax = Math.round(sourceMid + MAX_RANGE / 2);
   const candidates = generateCandidates(targetChordPitchClasses, rangeMin, rangeMax);
 
   // 4. Find optimal distance
