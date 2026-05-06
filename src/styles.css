@@ -34,16 +34,46 @@
   z-index: 100;
 }
 
-.vl-pill.grade-minimal { color: #28a745; border: 1px solid rgba(40, 167, 69, 0.2); }
-.vl-pill.grade-close   { color: #007aff; border: 1px solid rgba(0, 122, 255, 0.2); }
-.vl-pill.grade-wide    { color: #8e8e93; border: 1px solid rgba(142, 142, 147, 0.2); }
-.vl-pill.grade-incorrect { color: #ff3b30; border: 1px solid rgba(255, 59, 48, 0.2); }
+.vl-pill.grade-minimal {
+  color: #28a745;
+  border: 1px solid rgba(40, 167, 69, 0.2);
+}
+
+.vl-pill.grade-close {
+  color: #007aff;
+  border: 1px solid rgba(0, 122, 255, 0.2);
+}
+
+.vl-pill.grade-wide {
+  color: #8e8e93;
+  border: 1px solid rgba(142, 142, 147, 0.2);
+}
+
+.vl-pill.grade-incorrect {
+  color: #ff3b30;
+  border: 1px solid rgba(255, 59, 48, 0.2);
+}
 
 @keyframes vl-fade-in-out {
-  0% { opacity: 0; transform: translate(-50%, 10px); }
-  15% { opacity: 1; transform: translate(-50%, 0); }
-  85% { opacity: 1; transform: translate(-50%, 0); }
-  100% { opacity: 0; transform: translate(-50%, -10px); }
+  0% {
+    opacity: 0;
+    transform: translate(-50%, 10px);
+  }
+
+  15% {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+
+  85% {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+
+  100% {
+    opacity: 0;
+    transform: translate(-50%, -10px);
+  }
 }
 
 body {
@@ -154,26 +184,6 @@ select {
 }
 
 
-.hint-button {
-  height: 42px;
-  width: 100%;
-  margin-top: 7px;
-  border-radius: 14px;
-  display: inline-flex;
-  gap: 8px;
-  justify-content: center;
-  align-items: center;
-  background: rgba(247, 247, 248, 0.9);
-  color: #56565d;
-  border: 1px solid rgba(0, 0, 0, 0.08);
-  font-weight: 750;
-  cursor: pointer;
-}
-
-.hint-button.active {
-  background: #111;
-  color: white;
-}
 
 .flow-strip {
   display: flex;
@@ -281,9 +291,6 @@ select {
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), inset 0 0 0 2px rgba(0, 0, 0, 0.20);
 }
 
-.cell.guide-hint {
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), inset 0 0 0 2px rgba(230, 126, 34, 0.72);
-}
 
 .cell.can-stay {
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08), inset 0 0 0 3px rgba(230, 126, 34, 0.9);
@@ -432,7 +439,7 @@ button:disabled {
 
 
 .controls.key-controls {
-  grid-template-columns: auto 150px 1fr 90px 90px 1fr 160px;
+  grid-template-columns: auto 150px 1fr 90px 1.5fr 160px;
 }
 
 .mode-row {
@@ -456,8 +463,7 @@ button:disabled {
 
 
 
-.ctrl-random {
-}
+.ctrl-random {}
 
 .random-button {
   width: 100%;
@@ -486,11 +492,11 @@ button:disabled {
   }
 
   .controls.key-controls {
-    grid-template-columns: 1fr 1fr 42px 42px;
+    grid-template-columns: 1fr 1fr 42px;
     grid-template-areas:
-      "brand brand brand brand"
-      "key   prog  rand  hint"
-      "midi  midi  view  view";
+      "brand brand brand"
+      "key   prog  rand"
+      "midi  view  view";
   }
 
   .ctrl-random {
@@ -499,11 +505,12 @@ button:disabled {
 
   .ctrl-view {
     grid-area: view;
+    justify-self: end;
   }
-
 
   .controls.key-controls .brand {
     grid-area: brand;
+    justify-content: center;
     margin-bottom: 6px;
   }
 
@@ -517,23 +524,6 @@ button:disabled {
 
   .ctrl-midi {
     grid-area: midi;
-  }
-
-  .ctrl-hint {
-    grid-area: hint;
-    align-self: end;
-    display: flex;
-    flex-direction: column;
-    align-items: flex-end;
-  }
-
-  .hint-text {
-    display: none;
-  }
-
-  .hint-button {
-    width: 42px;
-    margin-top: 7px;
   }
 
   .random-button {
@@ -553,13 +543,16 @@ button:disabled {
 /* During Transition Complete, the completed destination chord turns green.
    On Next Round, awaitingNextRound becomes false, so these return to normal selected/black styling. */
 @keyframes success-flash {
-  0%, 30% {
+
+  0%,
+  30% {
     background: #2d7a43;
-    box-shadow: 0 10px 24px rgba(45, 122, 67, 0.30), inset 0 0 0 1px rgba(255,255,255,0.22);
+    box-shadow: 0 10px 24px rgba(45, 122, 67, 0.30), inset 0 0 0 1px rgba(255, 255, 255, 0.22);
   }
+
   100% {
     background: #111;
-    box-shadow: 0 11px 24px rgba(0,0,0,0.22);
+    box-shadow: 0 11px 24px rgba(0, 0, 0, 0.22);
   }
 }
 
@@ -576,19 +569,6 @@ button:disabled {
    orange outlines/anchors, not filled orange cells with glow. */
 
 
-/* Hint mode: subtle background fill for correct answers that aren't selected yet. */
-.cell.guide-hint:not(.selected):not(.moved-guide):not(.success-tone):not(.midi-held),
-.piano-key.guide-hint:not(.selected):not(.midi-held) {
-  background: rgba(242, 140, 40, 0.15) !important;
-  border: 1px solid rgba(242, 140, 40, 0.3);
-}
-
-/* If a hinted answer is already selected, don't show any extra outline or glow. */
-.cell.guide-hint.selected,
-.cell.guide-hint.moved-guide,
-.piano-key.guide-hint.selected {
-  box-shadow: 0 7px 18px rgba(242, 140, 40, 0.28);
-}
 
 
 @keyframes pulse-correct {
@@ -759,17 +739,31 @@ button:disabled {
 
 /* ── Piano key states ── */
 .piano-key.white.selected,
-.piano-key.white.midi-held { background: #f28c28; color: white; box-shadow: 0 4px 12px rgba(242, 140, 40, 0.35); }
+.piano-key.white.midi-held {
+  background: #f28c28;
+  color: white;
+  box-shadow: 0 4px 12px rgba(242, 140, 40, 0.35);
+}
+
 .piano-key.black.selected,
-.piano-key.black.midi-held { background: #c06a10; }
-.piano-key.white.guide-hint,
-.piano-key.black.guide-hint,
+.piano-key.black.midi-held {
+  background: #c06a10;
+}
+
 .piano-key.white.source-guide,
 .piano-key.black.source-guide {
   box-shadow: none;
 }
-.piano-key.white.moved-guide { background: #f28c28; color: white; }
-.piano-key.black.moved-guide { background: #c06a10; }
+
+.piano-key.white.moved-guide {
+  background: #f28c28;
+  color: white;
+}
+
+.piano-key.black.moved-guide {
+  background: #c06a10;
+}
+
 .piano-key.success-tone {
   animation: success-flash 0.5s ease forwards;
   color: white;

@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Dices, Eye } from "lucide-react";
+import { Dices } from "lucide-react";
 import { scoreVoiceLeadingTransition } from "./voiceLeadingScore";
 
 const NOTES = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"];
@@ -96,7 +96,7 @@ const MIDI_OFFSET = MIDI_BASE_NOTE - 6; // grid startNote=6 → cell.pitchClass 
 
 // Piano keyboard: 37 keys, C3 (MIDI 48) to C6 (MIDI 84)
 const PIANO_MIDI_START = 48;
-const PIANO_MIDI_END   = 84;
+const PIANO_MIDI_END = 84;
 const BLACK_PCS = new Set([1, 3, 6, 8, 10]); // Db Eb Gb Ab Bb
 
 function buildPianoKeys() {
@@ -151,13 +151,13 @@ function parseProgression(text, chords) {
 
 function generateRandomProgression() {
   const transitions = {
-    "I":   [["ii",3],["IV",3],["V",4],["vi",3],["iii",1]],
-    "ii":  [["V",5],["IV",2],["vii",2]],
-    "iii": [["vi",4],["IV",2],["I",1]],
-    "IV":  [["V",4],["ii",3],["I",2],["vii",1]],
-    "V":   [["I",5],["vi",3]],
-    "vi":  [["ii",4],["IV",3],["V",2]],
-    "vii": [["I",5],["iii",2]]
+    "I": [["ii", 3], ["IV", 3], ["V", 4], ["vi", 3], ["iii", 1]],
+    "ii": [["V", 5], ["IV", 2], ["vii", 2]],
+    "iii": [["vi", 4], ["IV", 2], ["I", 1]],
+    "IV": [["V", 4], ["ii", 3], ["I", 2], ["vii", 1]],
+    "V": [["I", 5], ["vi", 3]],
+    "vi": [["ii", 4], ["IV", 3], ["V", 2]],
+    "vii": [["I", 5], ["iii", 2]]
   };
   function pick(weighted) {
     const total = weighted.reduce((s, [, w]) => s + w, 0);
@@ -166,7 +166,7 @@ function generateRandomProgression() {
     return weighted[0][0];
   }
   const len = 3 + Math.floor(Math.random() * 8);
-  const result = [pick([["I",3],["vi",2],["ii",2],["IV",1]])];
+  const result = [pick([["I", 3], ["vi", 2], ["ii", 2], ["IV", 1]])];
   for (let i = 1; i < len; i++) {
     const opts = transitions[result[result.length - 1]];
     if (!opts) break;
@@ -273,7 +273,6 @@ function App() {
   const [movedGuides, setMovedGuides] = useState([]);
   const [selected, setSelected] = useState([]);
   const [feedback, setFeedback] = useState(null);
-  const [showHints, setShowHints] = useState(false);
   const [awaitingNextRound, setAwaitingNextRound] = useState(false);
   const [pendingDestination, setPendingDestination] = useState(null);
   const [transitionSummary, setTransitionSummary] = useState(null);
@@ -604,20 +603,20 @@ function App() {
       setFeedback(ok
         ? { type: "good", title: "Nice.", body: `${fromSymbol} guide tones: ${fromChord.guide.join(" and ")}.` }
         : {
-            type: "bad",
-            title: "Wrong guide tones.",
-            body: selectedInsideVoicing
-              ? `The guide tones are the 3rd and 7th: ${fromChord.guide.join(" · ")}.`
-              : "Guide tones must come from the starting voicing you just built."
+          type: "bad",
+          title: "Wrong guide tones.",
+          body: selectedInsideVoicing
+            ? `The guide tones are the 3rd and 7th: ${fromChord.guide.join(" · ")}.`
+            : "Guide tones must come from the starting voicing you just built."
 
-          }
+        }
       );
       return ok;
     }
 
     if (stage.key === "MOVE_GUIDES") {
       const current = activeSelection();
-      
+
       // If we are still holding the correct guides for the STARTING chord, stay silent.
       // We wait for the user to move towards the destination guides.
       if (samePitchSet(current, fromChord.guide)) {
@@ -675,8 +674,8 @@ function App() {
           if (badPair) {
             const octave = (m) => m != null ? Math.floor(m / 12) - 1 : "";
             const fromLabel = `${badPair.from.note}${octave(badPair.from.midi)}`;
-            const toLabel   = `${badPair.to.note}${octave(badPair.to.midi)}`;
-            const interval  = Math.abs((badPair.from.midi ?? 0) - (badPair.to.midi ?? 0));
+            const toLabel = `${badPair.to.note}${octave(badPair.to.midi)}`;
+            const interval = Math.abs((badPair.from.midi ?? 0) - (badPair.to.midi ?? 0));
             const direction = (badPair.to.midi ?? 0) > (badPair.from.midi ?? 0) ? "up" : "down";
             // Find the correct target: nearest destination guide tone to the source note
             const fromMidi = badPair.from.midi ?? 60;
@@ -734,17 +733,17 @@ function App() {
 
       setFeedback(ok
         ? {
-            type: extra <= 0.25 ? "good" : "okay",
-            title: extra <= 0.25 ? "Guide tones moved optimally." : "Correct guide tones, slightly more movement.",
-            body: `Movement ${mapping.total.toFixed(1)}. Best possible ${optimal.total.toFixed(1)}.${stayText}`
-          }
+          type: extra <= 0.25 ? "good" : "okay",
+          title: extra <= 0.25 ? "Guide tones moved optimally." : "Correct guide tones, slightly more movement.",
+          body: `Movement ${mapping.total.toFixed(1)}. Best possible ${optimal.total.toFixed(1)}.${stayText}`
+        }
         : {
-            type: "bad",
-            title: correctNotes ? "Correct notes, but too much motion." : "Wrong destination guide tones.",
-            body: correctNotes
-              ? `Movement ${mapping?.total.toFixed(1)}. Best possible ${optimal?.total.toFixed(1)}. A guide tone can stay if it is already in the next guide-tone set.`
-              : `For ${toSymbol} in ${keyCenter}, guide tones are: ${toChord.guide.join(" · ")}. One voice may stay if already correct.`
-          }
+          type: "bad",
+          title: correctNotes ? "Correct notes, but too much motion." : "Wrong destination guide tones.",
+          body: correctNotes
+            ? `Movement ${mapping?.total.toFixed(1)}. Best possible ${optimal?.total.toFixed(1)}. A guide tone can stay if it is already in the next guide-tone set.`
+            : `For ${toSymbol} in ${keyCenter}, guide tones are: ${toChord.guide.join(" · ")}. One voice may stay if already correct.`
+        }
       );
 
       return ok;
@@ -815,7 +814,7 @@ function App() {
       const newStartGuides = currentPressed
         .map((id) => allCells.find((c) => c.id === id))
         .filter(Boolean);
-      
+
       setStartVoicing(newStartGuides);
       setStartGuides(newStartGuides);
       setStageIndex(mode === "play" ? 3 : 1);
@@ -825,17 +824,17 @@ function App() {
       const newMovedGuides = currentPressed
         .map((id) => allCells.find((c) => c.id === id))
         .filter(Boolean);
-      
+
       setMovedGuides(newMovedGuides);
       setStageIndex(2);
     } else if (stage.key === "MOVE_GUIDES") {
       const currentPressed = Object.values(midiPressedRef.current);
       const allCells = [...GRID.flat(), ...PIANO_CELLS];
-      
+
       const newSelected = currentPressed
         .map((id) => allCells.find((c) => c.id === id))
         .filter((cell) => cell && !movedGuides.some((mg) => mg.id === cell.id));
-        
+
       setStageIndex(3);
       setSelected(newSelected);
     }
@@ -912,19 +911,19 @@ function App() {
       const stillHolding = midiPlayMode && Object.keys(midiPressedRef.current).length > 0;
       setStageIndex(stillHolding ? 1 : 0);
     }
-    
+
     // MIDI: carry over all physically held notes into the new round's Step 2 (IDENTIFY_GUIDES).
     if (midiPlayMode) {
       const currentPressed = Object.values(midiPressedRef.current);
       const allCells = [...GRID.flat(), ...PIANO_CELLS];
-      
+
       const newStartGuides = currentPressed
         .map((id) => allCells.find((c) => c.id === id))
         .filter(Boolean);
-        
+
       setStartGuides(newStartGuides);
     }
-    
+
     // Sync the registry with current physical state.
     Object.entries(midiPressedRef.current).forEach(([note, id]) => {
       midiNoteRegistryRef.current[id] = parseInt(note);
@@ -955,31 +954,10 @@ function App() {
     // the brief window between a stage transition and the midiHeldCells state update).
     const pressedIds = Object.values(midiPressedRef.current);
     const isMidiHeld = midiHeldCells.some((c) => c.id === cell.id) ||
-                       pressedIds.includes(cell.id);
+      pressedIds.includes(cell.id);
     const remainingDestinationTones = toChord.tones.filter((note) => !toChord.guide.includes(note));
 
-    const isCorrectNote = (note) => {
-      const pc = NOTES.indexOf(note);
-      if (pc !== -1) return (pc % 12 + 12) % 12 === cell.pitchClass;
-      const map = { "C#": 1, "Db": 1, "D#": 3, "Eb": 3, "F#": 6, "Gb": 6, "G#": 8, "Ab": 8, "A#": 10, "Bb": 10 };
-      return (map[note] ?? -1) === cell.pitchClass;
-    };
 
-    const hintAnswer =
-      showHints &&
-      (
-        (stage.key === "START_CHORD" && fromChord.tones.some(isCorrectNote)) ||
-        (stage.key === "IDENTIFY_GUIDES" &&
-          startVoicing.some((c) => c.id === cell.id) &&
-          fromChord.guide.some(isCorrectNote)) ||
-        (stage.key === "MOVE_GUIDES" && 
-          toChord.guide.some(isCorrectNote) &&
-          startGuides.some((sg) => Math.abs(withMidi(sg).midi - withMidi(cell).midi) <= 5)) ||
-        (stage.key === "FILL_CHORD" &&
-          !isMovedGuide &&
-          remainingDestinationTones.some(isCorrectNote) &&
-          movedGuides.some((mg) => Math.abs(withMidi(mg).midi - withMidi(cell).midi) <= 12))
-      );
 
     const isSuccessfulDestinationTone =
       awaitingNextRound &&
@@ -989,7 +967,6 @@ function App() {
       "cell",
       isMidiHeld ? "midi-held" : "",
       isSelected ? "selected" : "",
-      hintAnswer ? "guide-hint" : "",
       isStartVoicing && stage.key !== "START_CHORD" ? "ghost" : "",
       isMovedGuide ? "moved-guide" : "",
       isFinalLockedGuide ? "locked final-guide" : "",
@@ -1008,35 +985,22 @@ function App() {
 
     const curr = activeSelection();
     const remainingDestinationTones = toChord.tones.filter((n) => !toChord.guide.includes(n));
-    const isSelected    = curr.some((c) => c.id === pianoCell.id);
+    const isSelected = curr.some((c) => c.id === pianoCell.id);
     const pianoPressedIds = Object.values(midiPressedRef.current);
     const isMidiHeld = midiHeldCells.some((c) => c.id === pianoCell.id) ||
-                       pianoPressedIds.includes(pianoCell.id);
-    const isStartGuide  = startGuides.some((c) => c.id === pianoCell.id);
-    const isMovedGuide  = movedGuides.some((c) => c.id === pianoCell.id);
+      pianoPressedIds.includes(pianoCell.id);
+    const isStartGuide = startGuides.some((c) => c.id === pianoCell.id);
+    const isMovedGuide = movedGuides.some((c) => c.id === pianoCell.id);
     const isSuccessTone = awaitingNextRound && pendingDestination?.some((c) =>
       c.midi != null ? c.midi === key.midi : c.note === key.note
     );
 
-    const isHint = showHints && !awaitingNextRound && (
-      (stage.key === "START_CHORD"     && fromChord.tones.includes(key.note)) ||
-      (stage.key === "IDENTIFY_GUIDES" && 
-        startVoicing.some((c) => (c.midi != null ? c.midi === key.midi : c.note === key.note)) && 
-        fromChord.guide.includes(key.note)) ||
-      (stage.key === "MOVE_GUIDES"     && 
-        toChord.guide.includes(key.note) && 
-        startGuides.some((sg) => Math.abs(withMidi(sg).midi - key.midi) <= 5)) ||
-      (stage.key === "FILL_CHORD"      && 
-        !isMovedGuide && 
-        remainingDestinationTones.includes(key.note) && 
-        movedGuides.some((mg) => Math.abs(withMidi(mg).midi - key.midi) <= 12))
-    );
+
 
     return [
       key.isBlack ? "piano-key black" : "piano-key white",
-      isSelected   ? "selected"    : "",
-      isMidiHeld   ? "midi-held"   : "",
-      isHint       ? "guide-hint"  : "",
+      isSelected ? "selected" : "",
+      isMidiHeld ? "midi-held" : "",
       isStartGuide && stage.key !== "START_CHORD" ? "source-guide" : "",
       isMovedGuide ? "moved-guide" : "",
       isSuccessTone ? "success-tone" : "",
@@ -1054,7 +1018,7 @@ function App() {
   // eslint-disable-next-line react-hooks/rules-of-hooks
   useEffect(() => {
     if (!midiPlayMode || !canAdvance) return;
-    
+
     const timer = setTimeout(() => {
       const ok = advanceRef.current?.(true);
       if (ok) {
@@ -1103,7 +1067,7 @@ function App() {
       return;
     }
     const enrichedFrom = startGuides.map(withMidi);
-    const enrichedTo   = movedGuides.map(withMidi);
+    const enrichedTo = movedGuides.map(withMidi);
     const mapping = enrichedFrom.length === enrichedTo.length
       ? bestMapping(enrichedFrom, enrichedTo)
       : null;
@@ -1118,14 +1082,14 @@ function App() {
       if (!optimal || solved.score < optimal.score) optimal = solved;
     }
 
-    const userDistance   = mapping.total;
+    const userDistance = mapping.total;
     const optimalDistance = optimal?.total ?? null;
-    const excessDistance  = optimalDistance != null ? userDistance - optimalDistance : null;
+    const excessDistance = optimalDistance != null ? userDistance - optimalDistance : null;
 
     const guideResult = mapping.maxJump <= 2 ? "correct" : "incorrect — guide tone violation";
     const rating = mapping.maxJump > 2 ? null :
-                   mapping.total <= 1  ? "optimal" :
-                   mapping.total <= 3  ? "good"    : "could be improved";
+      mapping.total <= 1 ? "optimal" :
+        mapping.total <= 3 ? "good" : "could be improved";
 
     setVlScore({
       userDistance,
@@ -1135,8 +1099,8 @@ function App() {
       rating,
       message: guideResult === "correct"
         ? (rating === "optimal" ? "Optimal — guide tones resolved by step or stayed." :
-           rating === "good"    ? "Good — guide tones correct, slight extra motion." :
-                                  "Correct — consider tighter voice leading.")
+          rating === "good" ? "Good — guide tones correct, slight extra motion." :
+            "Correct — consider tighter voice leading.")
         : `✗ Guide tone leap of ${mapping.maxJump} semitone${mapping.maxJump !== 1 ? "s" : ""} — must stay or move by step.`,
     });
   }, [stage.key, movedGuides, startGuides]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -1187,18 +1151,7 @@ function App() {
             </button>
           </label>
 
-          <label className="ctrl-hint">
-            <span className="hint-label-text">Hints</span>
-            <button
-              className={showHints ? "hint-button active" : "hint-button"}
-              onClick={() => setShowHints((value) => !value)}
-              type="button"
-              title="Hints"
-            >
-              <Eye size={16} />
-              <span className="hint-text">{showHints ? "On" : "Off"}</span>
-            </button>
-          </label>
+
 
           <label className="ctrl-midi">
             MIDI
@@ -1276,13 +1229,37 @@ function App() {
             <span className="chord-unit">
               <strong>{fromSymbol}</strong>
               <span className="chord-unit-name">{getChordName(fromSymbol, fromChord.tones)}</span>
-              {mode === "learn" && <span className="chord-unit-notes">{fromChord.tones.join(" · ")}</span>}
+              {mode === "learn" && (
+                <span className="chord-unit-notes">
+                  {fromChord.tones.map((note, i) => (
+                    <span key={i}>
+                      {i > 0 && <span style={{ color: 'inherit', opacity: 0.5 }}> · </span>}
+                      <span style={stage.key === "IDENTIFY_GUIDES" && (i === 1 || i === 3)
+                        ? { color: '#f28c28', fontWeight: 800 } : {}}>
+                        {note}
+                      </span>
+                    </span>
+                  ))}
+                </span>
+              )}
             </span>
             <span className="chord-sep">→</span>
             <span className="chord-unit">
               <strong>{toSymbol}</strong>
               <span className="chord-unit-name">{getChordName(toSymbol, toChord.tones)}</span>
-              {mode === "learn" && <span className="chord-unit-notes">{toChord.tones.join(" · ")}</span>}
+              {mode === "learn" && (
+                <span className="chord-unit-notes">
+                  {toChord.tones.map((note, i) => (
+                    <span key={i}>
+                      {i > 0 && <span style={{ color: 'inherit', opacity: 0.5 }}> · </span>}
+                      <span style={stage.key === "MOVE_GUIDES" && (i === 1 || i === 3)
+                        ? { color: '#f28c28', fontWeight: 800 } : {}}>
+                        {note}
+                      </span>
+                    </span>
+                  ))}
+                </span>
+              )}
             </span>
           </div>
         </div>
@@ -1335,7 +1312,7 @@ function App() {
         {SHOW_DEBUG && (
           <div className="debug-midi">
             <div style={{ marginBottom: '6px', fontSize: '11px', fontWeight: '700', color: '#111' }}>
-              STAGE: {stage.key} {startVoicing.length > 0 && 
+              STAGE: {stage.key} {startVoicing.length > 0 &&
                 <span style={{ fontWeight: '400', opacity: 0.6, marginLeft: '8px' }}>
                   (Ref: {startVoicing.map(c => `${c.note}${withMidi(c).midi != null ? Math.floor(withMidi(c).midi / 12) - 1 : ''}`).join(" ")})
                 </span>
@@ -1343,16 +1320,16 @@ function App() {
             </div>
             {midiHeldCells.length > 0
               ? [...midiHeldCells]
-                  .map((c) => withMidi(c))
-                  .sort((a, b) => (a.midi || 0) - (b.midi || 0))
-                  .map((c) => {
-                    const octave = c.midi != null ? Math.floor(c.midi / 12) - 1 : "";
-                    const midiNum = c.midi != null ? ` (${c.midi})` : "";
-                    return `${c.note}${octave}${midiNum}`;
-                  })
-                  .join(" · ")
+                .map((c) => withMidi(c))
+                .sort((a, b) => (a.midi || 0) - (b.midi || 0))
+                .map((c) => {
+                  const octave = c.midi != null ? Math.floor(c.midi / 12) - 1 : "";
+                  const midiNum = c.midi != null ? ` (${c.midi})` : "";
+                  return `${c.note}${octave}${midiNum}`;
+                })
+                .join(" · ")
               : "—"}
-            
+
             {mode === "play" && startVoicing.length === 4 && midiHeldCells.length === 4 && (
               <div style={{ marginTop: '5px', fontSize: '10px', color: '#7c7c82' }}>
                 {(() => {
