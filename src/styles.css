@@ -333,6 +333,7 @@ button:disabled {
   flex-direction: column;
   align-items: center;
   gap: 12px;
+  margin-top: 0;
   margin-bottom: 8px;
   overflow-x: auto;
 }
@@ -492,11 +493,11 @@ button:disabled {
   }
 
   .controls.key-controls {
-    grid-template-columns: 1fr 1fr 42px;
+    grid-template-columns: 1fr 1fr 1fr 110px;
     grid-template-areas:
-      "brand brand brand"
-      "key   prog  rand"
-      "midi  view  view";
+      "brand brand brand brand"
+      "key   prog  prog  rand"
+      "midi  midi  midi  view";
   }
 
   .ctrl-random {
@@ -505,7 +506,11 @@ button:disabled {
 
   .ctrl-view {
     grid-area: view;
-    justify-self: end;
+  }
+
+  .ctrl-view .seg-control {
+    width: 100%;
+    margin-top: 7px;
   }
 
   .controls.key-controls .brand {
@@ -527,7 +532,7 @@ button:disabled {
   }
 
   .random-button {
-    width: 42px;
+    width: 100%;
   }
 
   .cell {

@@ -1134,7 +1134,7 @@ function App() {
             />
             <datalist id="progression-presets">
               {Object.entries(PROGRESSION_OPTIONS).map(([name, chords]) => (
-                <option key={name} value={chords.join(" ")}>{name}</option>
+                <option key={name} value={chords.join(" ")} />
               ))}
             </datalist>
           </label>
