@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Dices } from "lucide-react";
 import { scoreVoiceLeadingTransition } from "./voiceLeadingScore";
+import { resolveMidiCell as resolveMidiCellPure } from "./midiResolution";
 import {
   NOTES,
   MAJOR_KEYS,
@@ -134,7 +135,7 @@ function App() {
   function maxSelectionsForStage() {
     if (stage.key === "START_CHORD") return 4;
     if (stage.key === "IDENTIFY_GUIDES") return 2;
-    if (stage.key === "FILL_CHORD") return 4;
+    if (stage.key === "FILL_CHORD") return mode === "play" ? 4 : 4 - movedGuides.length;
     return 2;
   }
 
@@ -208,36 +209,19 @@ function App() {
   }
 
   function resolveMidiCell(noteNumber) {
-    // Piano mode: always 1-to-1 mapping by MIDI number (octave-aware)
-    if (viewMode === "piano") {
-      const pianoCell = PIANO_CELLS.find((c) => c.midi === noteNumber);
-      if (pianoCell) return pianoCell;
+    const cell = resolveMidiCellPure(noteNumber, {
+      viewMode,
+      pianoCells: PIANO_CELLS,
+      grid: GRID,
+      useOctaveMapping,
+      midiOffset: MIDI_OFFSET,
+      anchor: registerAnchorRef.current ?? null,
+    });
+    // Side-effect: seed the anchor on first proximity-mode resolution.
+    if (!registerAnchorRef.current && cell && !useOctaveMapping && viewMode !== "piano") {
+      registerAnchorRef.current = cell;
     }
-
-    const pitchClass = ((noteNumber % 12) + 12) % 12;
-    const cellsWithNote = GRID.flat().filter((c) => ((c.pitchClass % 12) + 12) % 12 === pitchClass);
-    if (cellsWithNote.length === 0) return null;
-
-    // Option 1: Performance Mode (Exact MIDI Octave Mapping)
-    if (useOctaveMapping) {
-      return cellsWithNote
-        .map((c) => ({ c, diff: Math.abs((c.pitchClass + MIDI_OFFSET) - noteNumber) }))
-        .sort((a, b) => a.diff - b.diff)[0].c;
-    }
-
-    // Option 2: Training Mode (Contour-Preserving Proximity Mapping)
-    // We'll perform a global re-balance in refreshMidiHeldCells, 
-    // but we need an initial guess here.
-    const target = registerAnchorRef.current || { row: (GRID.length - 1) / 2, col: (GRID[0].length - 1) / 2 };
-    const bestByProximity = cellsWithNote
-      .map((c) => ({ c, d: distance(target, c) }))
-      .sort((a, b) => a.d - b.d)[0].c;
-
-    if (!registerAnchorRef.current) {
-      registerAnchorRef.current = bestByProximity;
-    }
-
-    return bestByProximity;
+    return cell;
   }
 
   function refreshMidiHeldCells() {
@@ -588,34 +572,41 @@ function App() {
 
   function advanceStage() {
     if (stage.key === "START_CHORD") {
-      const currentPressed = Object.values(midiPressedRef.current);
-      const allCells = [...GRID.flat(), ...PIANO_CELLS];
-      const newStartGuides = currentPressed
-        .map((id) => allCells.find((c) => c.id === id))
-        .filter(Boolean);
-
-      setStartVoicing(newStartGuides);
-      setStartGuides(newStartGuides);
+      if (midiPlayMode) {
+        // MIDI: carry currently-held notes into the next stage.
+        const currentPressed = Object.values(midiPressedRef.current);
+        const allCells = [...GRID.flat(), ...PIANO_CELLS];
+        const newStartGuides = currentPressed
+          .map((id) => allCells.find((c) => c.id === id))
+          .filter(Boolean);
+        setStartVoicing(newStartGuides);
+        setStartGuides(newStartGuides);
+      }
+      // Mouse mode: startVoicing was set by clicks — leave it intact.
+      // startGuides stays [] so the user selects guide tones fresh.
       setStageIndex(mode === "play" ? 3 : 1);
     } else if (stage.key === "IDENTIFY_GUIDES") {
-      const currentPressed = Object.values(midiPressedRef.current);
-      const allCells = [...GRID.flat(), ...PIANO_CELLS];
-      const newMovedGuides = currentPressed
-        .map((id) => allCells.find((c) => c.id === id))
-        .filter(Boolean);
-
-      setMovedGuides(newMovedGuides);
+      if (midiPlayMode) {
+        // MIDI: seed movedGuides from currently-held notes.
+        const currentPressed = Object.values(midiPressedRef.current);
+        const allCells = [...GRID.flat(), ...PIANO_CELLS];
+        const newMovedGuides = currentPressed
+          .map((id) => allCells.find((c) => c.id === id))
+          .filter(Boolean);
+        setMovedGuides(newMovedGuides);
+      }
+      // Mouse mode: movedGuides stays [] so user selects from scratch.
       setStageIndex(2);
     } else if (stage.key === "MOVE_GUIDES") {
-      const currentPressed = Object.values(midiPressedRef.current);
-      const allCells = [...GRID.flat(), ...PIANO_CELLS];
-
-      const newSelected = currentPressed
-        .map((id) => allCells.find((c) => c.id === id))
-        .filter((cell) => cell && !movedGuides.some((mg) => mg.id === cell.id));
-
+      if (midiPlayMode) {
+        const currentPressed = Object.values(midiPressedRef.current);
+        const allCells = [...GRID.flat(), ...PIANO_CELLS];
+        const newSelected = currentPressed
+          .map((id) => allCells.find((c) => c.id === id))
+          .filter((cell) => cell && !movedGuides.some((mg) => mg.id === cell.id));
+        setSelected(newSelected);
+      }
       setStageIndex(3);
-      setSelected(newSelected);
     }
     setFeedback(null);
   }

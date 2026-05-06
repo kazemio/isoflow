@@ -101,3 +101,12 @@ export function checkFillChord(movedGuides, selectedExtra, toChordTones, mode = 
   const combined = mode === "play" ? selectedExtra : [...movedGuides, ...selectedExtra];
   return combined.length === 4 && samePitchSet(combined, toChordTones);
 }
+
+// Returns false (widerVoicing) when any extra tone is more than maxInterval
+// semitones away from every guide tone.  null MIDI values are treated as ok.
+export function checkRegister(extraToneMidis, guideMidis, maxInterval = 12) {
+  if (guideMidis.length === 0) return true;
+  return extraToneMidis.every(
+    (m) => m == null || guideMidis.some((gm) => Math.abs(m - gm) <= maxInterval)
+  );
+}

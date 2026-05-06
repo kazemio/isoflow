@@ -15,7 +15,7 @@ function getPermutations(arr) {
   return perms;
 }
 
-function calculateDistance(source, target) {
+export function calculateDistance(source, target) {
   // We assume both are same length (4)
   // Since they are MIDI notes, we need to find the best assignment (minimal total movement)
   const perms = getPermutations(target);
@@ -38,7 +38,7 @@ function calculateDistance(source, target) {
   return { total: minTotal, maxJump: minMax };
 }
 
-function generateCandidates(pitchClasses, rangeMin, rangeMax) {
+export function generateCandidates(pitchClasses, rangeMin, rangeMax) {
   // Generate all possible MIDI notes for each pitch class in range
   const possibleNotes = pitchClasses.map(pc => {
     const notes = [];
@@ -74,7 +74,7 @@ function generateCandidates(pitchClasses, rangeMin, rangeMax) {
   return results;
 }
 
-function getGuideTones(midiNotes, pitchClasses) {
+export function getGuideTones(midiNotes, pitchClasses) {
   // pitchClasses[1] is 3rd, pitchClasses[2] is 7th (assuming sorted root, 3, 5, 7)
   // Actually, we should pass them explicitly or identify them.
   // For now, assume pitchClasses array is [root, 3, 5, 7]

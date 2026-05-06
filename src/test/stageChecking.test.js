@@ -6,6 +6,7 @@ import {
   checkMoveGuidesMidi,
   checkMoveGuidesGrid,
   checkFillChord,
+  checkRegister,
 } from "../voiceLeadingLogic";
 
 const GRID = buildGrid(8, 8, 6);
@@ -201,5 +202,55 @@ describe("checkFillChord", () => {
   it("in play mode fails when selectedExtra is only 3 notes", () => {
     const three = [pcCell("g", 7, "G"), pcCell("b", 11, "B"), pcCell("d", 2, "D")];
     expect(checkFillChord([], three, CHORDS_C.V.tones, "play")).toBe(false);
+  });
+});
+
+describe("checkRegister", () => {
+  // Guide tones B3(59) and F4(65) — midpoint ≈ 62, spread = 6 semitones.
+  const guides = [59, 65];
+
+  it("passes when all extra tones are within 12 semitones of a guide tone", () => {
+    // G3(55): |55-59|=4 ✓  D4(62): |62-59|=3 ✓
+    expect(checkRegister([55, 62], guides)).toBe(true);
+  });
+
+  it("fails when an extra tone is more than 12 semitones from every guide tone", () => {
+    // D2(38): |38-59|=21, |38-65|=27 — both > 12
+    expect(checkRegister([55, 38], guides)).toBe(false);
+  });
+
+  it("passes at exactly 12 semitones (inclusive boundary)", () => {
+    // 59 - 12 = 47: |47-59|=12 ✓
+    expect(checkRegister([47], guides)).toBe(true);
+    // 65 + 12 = 77: |77-65|=12 ✓
+    expect(checkRegister([77], guides)).toBe(true);
+  });
+
+  it("fails at 13 semitones", () => {
+    // 59 - 13 = 46: |46-59|=13, |46-65|=19 — both > 12
+    expect(checkRegister([46], guides)).toBe(false);
+  });
+
+  it("passes when guideMidis is empty (no constraint)", () => {
+    expect(checkRegister([30, 90], [])).toBe(true);
+  });
+
+  it("treats null extra-tone MIDI as ok (unknown register)", () => {
+    expect(checkRegister([null, 62], guides)).toBe(true);
+  });
+
+  it("passes when extraToneMidis is empty", () => {
+    expect(checkRegister([], guides)).toBe(true);
+  });
+
+  it("custom maxInterval: fails when a tone is > maxInterval from every guide", () => {
+    // guides=[59,65], maxInterval=7.
+    // Note 74: |74-59|=15>7, |74-65|=9>7 — outside both guide ranges → fail.
+    // Note 55: |55-59|=4 ≤ 7 → still ok.
+    expect(checkRegister([55, 74], guides, 7)).toBe(false);
+  });
+
+  it("custom maxInterval: passes at exactly the custom boundary", () => {
+    expect(checkRegister([52], guides, 7)).toBe(true); // |52-59|=7 ✓
   });
 });
