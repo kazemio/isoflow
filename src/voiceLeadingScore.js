@@ -75,12 +75,10 @@ export function generateCandidates(pitchClasses, rangeMin, rangeMax) {
 }
 
 export function getGuideTones(midiNotes, pitchClasses) {
-  // pitchClasses[1] is 3rd, pitchClasses[2] is 7th (assuming sorted root, 3, 5, 7)
-  // Actually, we should pass them explicitly or identify them.
-  // For now, assume pitchClasses array is [root, 3, 5, 7]
+  // pitchClasses order: [root, 3rd, 5th, 7th]
   const pc3 = pitchClasses[1];
-  const pc7 = pitchClasses[2];
-  
+  const pc7 = pitchClasses[3];
+
   const guideMidis = [];
   for (const m of midiNotes) {
     const pc = ((m % 12) + 12) % 12;

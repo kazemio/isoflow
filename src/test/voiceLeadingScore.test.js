@@ -210,24 +210,18 @@ describe("generateCandidates", () => {
 });
 
 // ── getGuideTones ────────────────────────────────────────────────────────────
-//
-// NOTE: the function uses pitchClasses[1] (3rd) and pitchClasses[2] (5th in
-// standard [root,3,5,7] ordering). The comment in the source says "7th" but
-// actually indexes the 5th. Tests document the real behaviour.
 
 describe("getGuideTones", () => {
-  // Dm7 pitch-class order as passed to scoreVoiceLeadingTransition:
-  // [root=D(2), 3rd=F(5), 5th=A(9), 7th=C(0)]
-  // getGuideTones picks index 1 (F=5) and index 2 (A=9).
+  // Dm7: [root=D(2), 3rd=F(5), 5th=A(9), 7th=C(0)] — guide tones are F and C
   const DM7_PCS = [2, 5, 9, 0];
 
-  it("extracts notes matching pitchClasses[1] (3rd=F) and pitchClasses[2] (5th=A) for Dm7", () => {
+  it("extracts the 3rd (index 1) and 7th (index 3) for Dm7", () => {
     // D4(62) F4(65) A4(69) C5(72)
     const guides = getGuideTones([62, 65, 69, 72], DM7_PCS);
     expect(guides).toContain(65); // F4 — 3rd ✓
-    expect(guides).toContain(69); // A4 — 5th (index 2) ✓
+    expect(guides).toContain(72); // C5 — 7th ✓
     expect(guides).not.toContain(62); // D is root
-    expect(guides).not.toContain(72); // C is 7th (index 3, not extracted)
+    expect(guides).not.toContain(69); // A is 5th
   });
 
   it("returns exactly 2 guide tones from a standard 4-note voicing", () => {
@@ -235,31 +229,29 @@ describe("getGuideTones", () => {
     expect(guides.length).toBe(2);
   });
 
-  it("returns empty array when voicing has no F (5) or A (9)", () => {
-    // C4(60) D4(62) G4(67) B4(71) — pcs [0,2,7,11], no 5 or 9
-    const guides = getGuideTones([60, 62, 67, 71], DM7_PCS);
+  it("returns empty array when voicing has no F (5) or C (0)", () => {
+    // D4(62) G4(67) A4(69) B4(71) — pcs [2,7,9,11], no 5 or 0
+    const guides = getGuideTones([62, 67, 69, 71], DM7_PCS);
     expect(guides).toEqual([]);
   });
 
-  it("works for G7: picks 3rd=B(11) and 5th=D(2)", () => {
+  it("works for G7: 3rd=B(11), 7th=F(5)", () => {
     // G7_PCS = [root=G(7), 3rd=B(11), 5th=D(2), 7th=F(5)]
     const G7_PCS = [7, 11, 2, 5];
     // G3(55) B3(59) D4(62) F4(65)
     const guides = getGuideTones([55, 59, 62, 65], G7_PCS);
     expect(guides).toContain(59); // B3 — 3rd ✓
-    expect(guides).toContain(62); // D4 — 5th (index 2) ✓
-    expect(guides).not.toContain(65); // F is 7th (index 3, not extracted)
+    expect(guides).toContain(65); // F4 — 7th ✓
+    expect(guides).not.toContain(62); // D is 5th
     expect(guides.length).toBe(2);
   });
 
   it("collects all occurrences when multiple notes share a guide pitch class", () => {
-    // F3(53) F4(65) A4(69) F5(77) — three F notes and one A
-    // Both F(5) and A(9) are guide pcs for Dm7 → all four notes qualify
-    const guides = getGuideTones([53, 65, 69, 77], DM7_PCS);
-    expect(guides).toContain(53);  // F3
-    expect(guides).toContain(65);  // F4
-    expect(guides).toContain(69);  // A4
-    expect(guides).toContain(77);  // F5
-    expect(guides.length).toBe(4);
+    // F3(53) A4(69) C5(72) F5(77) — two F notes (3rd) and one C (7th)
+    const guides = getGuideTones([53, 69, 72, 77], DM7_PCS);
+    expect(guides).toContain(53);  // F3 — 3rd
+    expect(guides).toContain(72);  // C5 — 7th
+    expect(guides).toContain(77);  // F5 — 3rd
+    expect(guides).not.toContain(69); // A is 5th
   });
 });
