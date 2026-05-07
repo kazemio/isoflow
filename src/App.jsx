@@ -737,7 +737,8 @@ function App() {
       "cell",
       isMidiHeld ? "midi-held" : "",
       isSelected ? "selected" : "",
-      isStartVoicing && stage.key !== "START_CHORD" ? "ghost" : "",
+      isStartVoicing && stage.key === "IDENTIFY_GUIDES" && !isSelected ? "voicing-hint" : "",
+      isStartGuide && stage.key === "MOVE_GUIDES" && !isSelected && !isMovedGuide ? "voicing-hint" : "",
       isMovedGuide ? "moved-guide" : "",
       isFinalLockedGuide ? "locked final-guide" : "",
       isSuccessfulDestinationTone ? "success-tone" : ""
