@@ -520,6 +520,10 @@ button:disabled {
 }
 
 @media (max-width: 900px) {
+  .github-link-label {
+    display: none;
+  }
+
   .grid {
     grid-template-columns: repeat(8, 36px);
   }
