@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Dices } from "lucide-react";
+import { Dices, Github } from "lucide-react";
 import { scoreVoiceLeadingTransition } from "./voiceLeadingScore";
 import { resolveMidiCell as resolveMidiCellPure } from "./midiResolution";
 import {
@@ -878,8 +878,19 @@ function App() {
   return (
     <main className="app-shell">
       <section className="panel">
+        <div className="brand"><span className="brand-icon">IF</span>IsoFlow</div>
+        <a
+          className="github-link"
+          href="https://github.com/kazemio/isoflow/issues"
+          target="_blank"
+          rel="noreferrer"
+          title="Feedback / contribute"
+        >
+          <Github size={18} />
+          <span className="github-link-label">Contribute / Feedback</span>
+        </a>
+
         <div className="controls key-controls">
-          <div className="brand"><span className="brand-icon">IF</span>IsoFlow</div>
 
           <label className="ctrl-key">
             Key

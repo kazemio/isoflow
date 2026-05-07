@@ -106,6 +106,7 @@ button {
 .panel {
   width: min(1180px, 100%);
   padding: 12px;
+  position: relative;
 }
 
 .eyebrow {
@@ -117,7 +118,37 @@ button {
   font-weight: 700;
 }
 
+.github-link {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  display: flex;
+  align-items: center;
+  color: #888;
+  padding: 4px;
+  border-radius: 6px;
+  transition: color 0.15s;
+  text-decoration: none;
+}
+.github-link:hover {
+  color: #1b1b1f;
+}
+
+.github-link-label {
+  margin-left: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #aaa;
+}
+
+.github-link:hover .github-link-label {
+  color: #555;
+}
+
 .brand {
+  position: absolute;
+  top: 14px;
+  left: 14px;
   display: flex;
   align-items: center;
   gap: 7px;
@@ -125,7 +156,6 @@ button {
   font-weight: 800;
   letter-spacing: -0.04em;
   color: #1b1b1f;
-  align-self: center;
 }
 
 .brand-icon {
@@ -155,6 +185,7 @@ h2 {
   gap: 18px;
   margin: 12px 0 12px;
 }
+
 
 label {
   color: #74747c;
@@ -440,7 +471,8 @@ button:disabled {
 
 
 .controls.key-controls {
-  grid-template-columns: auto 150px 1fr 90px 1.5fr 160px;
+  grid-template-columns: 150px 1fr 90px 1.5fr 160px;
+  margin-top: 46px;
 }
 
 .mode-row {
@@ -495,9 +527,8 @@ button:disabled {
   .controls.key-controls {
     grid-template-columns: 1fr 1fr 1fr 110px;
     grid-template-areas:
-      "brand brand brand brand"
-      "key   prog  prog  rand"
-      "midi  midi  midi  view";
+      "key  prog  prog  rand"
+      "midi midi  midi  view";
   }
 
   .ctrl-random {
@@ -511,12 +542,6 @@ button:disabled {
   .ctrl-view .seg-control {
     width: 100%;
     margin-top: 7px;
-  }
-
-  .controls.key-controls .brand {
-    grid-area: brand;
-    justify-content: center;
-    margin-bottom: 6px;
   }
 
   .ctrl-key {
