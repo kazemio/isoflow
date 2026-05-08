@@ -1,7 +1,9 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { Dices, Github } from "lucide-react";
+import { Dices, Github, Settings } from "lucide-react";
+import { SettingsDrawer } from "./SettingsDrawer";
 import { scoreVoiceLeadingTransition } from "./voiceLeadingScore";
 import { resolveMidiCell as resolveMidiCellPure } from "./midiResolution";
+import { createMidiPassthrough, shouldForward } from "./midiOutput";
 import {
   NOTES,
   MAJOR_KEYS,
@@ -61,6 +63,13 @@ function App() {
   const [midiStatus, setMidiStatus] = useState(midiSupported ? "disconnected" : "unsupported");
   const [midiInputs, setMidiInputs] = useState([]);
   const [selectedMidiInputId, setSelectedMidiInputId] = useState("");
+  const [midiInChannel, setMidiInChannel] = useState(0); // 0 = All (omni), 1-16 specific
+  const [midiOutputs, setMidiOutputs] = useState([]);
+  const [selectedMidiOutputId, setSelectedMidiOutputId] = useState("");
+  const [midiOutChannel, setMidiOutChannel] = useState(1); // 1-16
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const midiOutRef = useRef(null);
+  if (midiOutRef.current === null) midiOutRef.current = createMidiPassthrough();
   const [vlScore, setVlScore] = useState(null);
   const vlTimerRef = useRef(null);
   const lastMidiCellRef = useRef(null);
@@ -264,6 +273,16 @@ function App() {
   midiNoteOffRef.current = onMidiNoteOff;
 
   useEffect(() => {
+    const access = midiAccessRef.current;
+    const prevOutId = selectedMidiOutputId;
+    const prevChannel = midiOutChannel;
+    return () => {
+      const out = prevOutId ? access?.outputs.get(prevOutId) : null;
+      midiOutRef.current.flush(out, prevChannel);
+    };
+  }, [selectedMidiOutputId, midiOutChannel]);
+
+  useEffect(() => {
     if (!midiSupported) return;
 
     let cancelled = false;
@@ -276,22 +295,32 @@ function App() {
         midiAccessRef.current = access;
         setMidiStatus("disconnected");
 
-        const refreshInputs = () => {
-          const next = Array.from(access.inputs.values()).map((input) => ({
+        const refreshDevices = () => {
+          const nextInputs = Array.from(access.inputs.values()).map((input) => ({
             id: input.id,
             name: input.name || "MIDI input",
             manufacturer: input.manufacturer || ""
           }));
-          setMidiInputs(next);
-          setMidiStatus(next.length > 0 ? "connected" : "disconnected");
+          const nextOutputs = Array.from(access.outputs.values()).map((output) => ({
+            id: output.id,
+            name: output.name || "MIDI output",
+            manufacturer: output.manufacturer || ""
+          }));
+          setMidiInputs(nextInputs);
+          setMidiOutputs(nextOutputs);
+          setMidiStatus(nextInputs.length > 0 || nextOutputs.length > 0 ? "connected" : "disconnected");
           setSelectedMidiInputId((currentId) => {
-            if (currentId && next.some((i) => i.id === currentId)) return currentId;
-            return next[0]?.id ?? "";
+            if (currentId && nextInputs.some((i) => i.id === currentId)) return currentId;
+            return nextInputs[0]?.id ?? "";
+          });
+          setSelectedMidiOutputId((currentId) => {
+            if (currentId && nextOutputs.some((o) => o.id === currentId)) return currentId;
+            return "";
           });
         };
 
-        refreshInputs();
-        access.onstatechange = refreshInputs;
+        refreshDevices();
+        access.onstatechange = refreshDevices;
       } catch (err) {
         if (cancelled) return;
         setMidiStatus("error");
@@ -320,14 +349,37 @@ function App() {
 
     const onMessage = (event) => {
       const data = event?.data;
-      if (!data || data.length < 3) return;
-      const status = data[0] & 0xf0;
+      if (!data || data.length === 0) return;
+      const statusByte = data[0];
+      const op = statusByte & 0xf0;
+      const isChannelVoice = statusByte >= 0x80 && statusByte < 0xf0;
+
+      // Channel filter (channel-voice messages only). System messages bypass.
+      if (isChannelVoice && midiInChannel !== 0) {
+        const inChannel = (statusByte & 0x0f) + 1;
+        if (inChannel !== midiInChannel) return;
+      }
+
+      // True passthrough: forward raw bytes (with channel rewrite) to the output,
+      // unless doing so would create a feedback loop on the same device.
+      if (selectedMidiOutputId && shouldForward({
+        sameDevice: selectedMidiInputId === selectedMidiOutputId,
+        isChannelVoice,
+        inFilterChannel: midiInChannel,
+        outChannel: midiOutChannel,
+      })) {
+        const out = midiAccessRef.current?.outputs.get(selectedMidiOutputId);
+        if (out) midiOutRef.current.forward(out, data, midiOutChannel);
+      }
+
+      // UI sync: only note-on/note-off drive cell selection.
+      if (data.length < 3) return;
       const note = data[1];
       const velocity = data[2];
-      if (status === 0x90) {
+      if (op === 0x90) {
         if (velocity === 0) midiNoteOffRef.current?.(note);
         else midiNoteOnRef.current?.(note, velocity);
-      } else if (status === 0x80) {
+      } else if (op === 0x80) {
         midiNoteOffRef.current?.(note);
       }
     };
@@ -338,7 +390,7 @@ function App() {
     return () => {
       if (input.onmidimessage === onMessage) input.onmidimessage = null;
     };
-  }, [midiStatus, selectedMidiInputId]);
+  }, [midiStatus, selectedMidiInputId, midiInChannel, selectedMidiOutputId, midiOutChannel]);
 
 
   function checkStage() {
@@ -933,41 +985,17 @@ function App() {
             </button>
           </label>
 
-
-
-          <label className="ctrl-midi">
-            MIDI
-            <select
-              value={selectedMidiInputId}
-              onChange={(e) => setSelectedMidiInputId(e.target.value)}
-              disabled={midiStatus !== "connected" || midiInputs.length === 0}
+          <label className="ctrl-settings">
+            Settings
+            <button
+              type="button"
+              className="random-button"
+              onClick={() => setSettingsOpen(true)}
+              title="Settings"
+              aria-label="Open settings"
             >
-              {midiInputs.length === 0 ? (
-                <option value="">No MIDI inputs</option>
-              ) : (
-                midiInputs.map((input) => (
-                  <option key={input.id} value={input.id}>
-                    {input.manufacturer ? `${input.manufacturer} — ` : ""}{input.name}
-                  </option>
-                ))
-              )}
-            </select>
-          </label>
-
-          <label className="ctrl-view">
-            Layout
-            <div className="seg-control" style={{ "--seg-x": viewMode === "piano" ? 1 : 0 }}>
-              <button
-                type="button"
-                className={viewMode === "grid" ? "seg-option active" : "seg-option"}
-                onClick={() => setViewMode("grid")}
-              >Grid</button>
-              <button
-                type="button"
-                className={viewMode === "piano" ? "seg-option active" : "seg-option"}
-                onClick={() => setViewMode("piano")}
-              >Piano</button>
-            </div>
+              <Settings size={15} />
+            </button>
           </label>
         </div>
 
@@ -1139,6 +1167,109 @@ function App() {
         )}
 
       </section>
+
+      <SettingsDrawer
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        title="Settings"
+      >
+        <div className="drawer-section">
+          <div className="drawer-section-title">Layout</div>
+          <div className="seg-control" style={{ "--seg-x": viewMode === "piano" ? 1 : 0 }}>
+            <button
+              type="button"
+              className={viewMode === "grid" ? "seg-option active" : "seg-option"}
+              onClick={() => setViewMode("grid")}
+            >Grid</button>
+            <button
+              type="button"
+              className={viewMode === "piano" ? "seg-option active" : "seg-option"}
+              onClick={() => setViewMode("piano")}
+            >Piano</button>
+          </div>
+        </div>
+
+        <div className="drawer-section">
+          <div className="drawer-section-title">MIDI</div>
+
+          <div className="drawer-row">
+            <label className="drawer-row-device">
+              Input
+              <select
+                value={selectedMidiInputId}
+                onChange={(e) => setSelectedMidiInputId(e.target.value)}
+                disabled={!midiSupported || midiInputs.length === 0}
+              >
+                {!midiSupported ? (
+                  <option value="">MIDI not supported</option>
+                ) : midiInputs.length === 0 ? (
+                  <option value="">No MIDI inputs</option>
+                ) : (
+                  <>
+                    <option value="">— None —</option>
+                    {midiInputs.map((input) => (
+                      <option key={input.id} value={input.id}>
+                        {input.manufacturer ? `${input.manufacturer} — ` : ""}{input.name}
+                      </option>
+                    ))}
+                  </>
+                )}
+              </select>
+            </label>
+            <label className="drawer-row-channel">
+              Channel
+              <select
+                value={midiInChannel}
+                onChange={(e) => setMidiInChannel(Number(e.target.value))}
+                disabled={!selectedMidiInputId}
+              >
+                <option value={0}>All</option>
+                {Array.from({ length: 16 }, (_, i) => i + 1).map((ch) => (
+                  <option key={ch} value={ch}>{ch}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <div className="drawer-row">
+            <label className="drawer-row-device">
+              Output
+              <select
+                value={selectedMidiOutputId}
+                onChange={(e) => setSelectedMidiOutputId(e.target.value)}
+                disabled={!midiSupported || midiOutputs.length === 0}
+              >
+                {!midiSupported ? (
+                  <option value="">MIDI not supported</option>
+                ) : midiOutputs.length === 0 ? (
+                  <option value="">No MIDI outputs</option>
+                ) : (
+                  <>
+                    <option value="">— None —</option>
+                    {midiOutputs.map((output) => (
+                      <option key={output.id} value={output.id}>
+                        {output.manufacturer ? `${output.manufacturer} — ` : ""}{output.name}
+                      </option>
+                    ))}
+                  </>
+                )}
+              </select>
+            </label>
+            <label className="drawer-row-channel">
+              Channel
+              <select
+                value={midiOutChannel}
+                onChange={(e) => setMidiOutChannel(Number(e.target.value))}
+                disabled={!selectedMidiOutputId}
+              >
+                {Array.from({ length: 16 }, (_, i) => i + 1).map((ch) => (
+                  <option key={ch} value={ch}>{ch}</option>
+                ))}
+              </select>
+            </label>
+          </div>
+        </div>
+      </SettingsDrawer>
     </main>
   );
 }
