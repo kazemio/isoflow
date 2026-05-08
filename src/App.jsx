@@ -4,7 +4,7 @@ import { SettingsDrawer } from "./SettingsDrawer";
 import { scoreVoiceLeadingTransition } from "./voiceLeadingScore";
 import { resolveMidiCell as resolveMidiCellPure } from "./midiResolution";
 import { createMidiPassthrough, shouldForward } from "./midiOutput";
-import { detectWiderVoicing, shouldShowVoicingHint } from "./voicingUtils";
+import { evaluateVoiceLeading, shouldShowVoicingHint } from "./voicingUtils";
 import {
   NOTES,
   MAJOR_KEYS,
@@ -59,6 +59,7 @@ function App() {
   const [awaitingNextRound, setAwaitingNextRound] = useState(false);
   const [pendingDestination, setPendingDestination] = useState(null);
   const [transitionSummary, setTransitionSummary] = useState(null);
+  const [transitionGrade, setTransitionGrade] = useState(null); // "good" | "okay"
 
   const midiSupported = typeof navigator !== "undefined" && typeof navigator.requestMIDIAccess === "function";
   const [midiStatus, setMidiStatus] = useState(midiSupported ? "disconnected" : "unsupported");
@@ -123,6 +124,7 @@ function App() {
     setAwaitingNextRound(false);
     setPendingDestination(null);
     setTransitionSummary(null);
+    setTransitionGrade(null);
     midiNoteRegistryRef.current = {};
     registerAnchorRef.current = null;
   }
@@ -572,31 +574,15 @@ function App() {
         combined.length === 4 &&
         samePitchSet(combined, toChord.tones);
 
-      let widerVoicing = false;
+      let score = null;
       if (pitchOk) {
-        if (midiPlayMode && mode === "play") {
-          // Play mode voice-leading: check whole chord move (4 voices)
-          const sMidi = startVoicing.map((c) => withMidi(c));
-          const tMidi = combined.map((c) => withMidi(c));
-          const mapping = bestMapping(sMidi, tMidi);
-          const ok = mapping !== null && mapping.maxJump <= 7;
-          if (!ok) {
-            setFeedback({ type: "bad", title: "Too much motion.", body: `Leap of ${mapping.maxJump} semitones is too large.` });
-            return false;
-          }
-        }
-        // Motion-based: flag wider voicing if any non-guide tone leapt more
-        // than a 5th from its starting position (see voicingUtils.js).
-        const newNonGuides = midiPlayMode
-          ? current.filter((c) => !movedGuides.some((mg) => mg.id === c.id))
-          : selected;
-        if (detectWiderVoicing(
+        // 4-tier voice-leading score over all 4 voices (see voicingUtils.js).
+        // Wide leaps surface as Wide / amber in the score; chord correctness
+        // is the only hard-fail at FILL_CHORD.
+        score = evaluateVoiceLeading(
           startVoicing.map(withMidi),
-          startGuides.map(withMidi),
-          newNonGuides.map(withMidi)
-        )) {
-          widerVoicing = true;
-        }
+          combined.map(withMidi)
+        );
       }
 
       const ok = pitchOk;
@@ -604,9 +590,11 @@ function App() {
         const completedDestination = combined;
         setPendingDestination(completedDestination);
         setAwaitingNextRound(true);
-        setTransitionSummary(widerVoicing
-          ? "Wider voicing than ideal."
-          : "Smooth.");
+        setTransitionSummary(score?.feedback ?? "Smooth.");
+        const grade = (score?.classification === "Optimal" || score?.classification === "Good")
+          ? "good"
+          : "okay";
+        setTransitionGrade(grade);
         setFeedback(null);
       } else {
         setFeedback({
@@ -714,6 +702,7 @@ function App() {
     setFeedback(null);
     setPendingDestination(null);
     setTransitionSummary(null);
+    setTransitionGrade(null);
     setAwaitingNextRound(false);
 
     // Play mode seamless transition:
@@ -1017,7 +1006,7 @@ function App() {
         </div>
 
 
-        <div className={`step-row mode-${mode}${feedback && !awaitingNextRound && (mode === "learn" || feedback.type === "good") ? ` step-${feedback.type}` : awaitingNextRound ? (transitionSummary?.toLowerCase().includes("wider voicing") ? " step-okay" : " step-good") : ""}`}>
+        <div className={`step-row mode-${mode}${feedback && !awaitingNextRound && (mode === "learn" || feedback.type === "good") ? ` step-${feedback.type}` : awaitingNextRound ? ` step-${transitionGrade ?? "good"}` : ""}`}>
           <div className="flow-strip" style={{ visibility: mode === "learn" ? "visible" : "hidden" }}>
             {STAGES.map((item, index) => {
               const actualIndex = STAGES.indexOf(item);

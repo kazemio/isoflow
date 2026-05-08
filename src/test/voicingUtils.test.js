@@ -1,105 +1,230 @@
 import { describe, it, expect } from "vitest";
-import { detectWiderVoicing, shouldShowVoicingHint } from "../voicingUtils";
+import {
+  evaluateVoiceLeading,
+  shouldShowVoicingHint,
+  penaltyFor,
+  classifyScore,
+  feedbackFor,
+} from "../voicingUtils";
 
 // Minimal cell factory. midi is required for distance() to work accurately.
 function cell(id, midi) {
   return { id, midi, row: 0, col: 0, note: "C", pitchClass: midi };
 }
 
-// ── detectWiderVoicing ───────────────────────────────────────────────────────
+// ── penaltyFor / classifyScore / feedbackFor ────────────────────────────────
 
-describe("detectWiderVoicing", () => {
-  // startVoicing: root(C3=48) + 3rd(E3=52) + 5th(G3=55) + 7th(B3=59)
-  // startGuides (3rd + 7th): E3=52, B3=59
-  // startNonGuides (root + 5th): C3=48, G3=55
+describe("penaltyFor", () => {
+  it("0–2 semitones → 0 penalty", () => {
+    expect(penaltyFor(0)).toBe(0);
+    expect(penaltyFor(1)).toBe(0);
+    expect(penaltyFor(2)).toBe(0);
+  });
+  it("3–5 semitones → +1", () => {
+    expect(penaltyFor(3)).toBe(1);
+    expect(penaltyFor(5)).toBe(1);
+  });
+  it("6–11 semitones → +2", () => {
+    expect(penaltyFor(6)).toBe(2);
+    expect(penaltyFor(11)).toBe(2);
+  });
+  it("12+ semitones → +4", () => {
+    expect(penaltyFor(12)).toBe(4);
+    expect(penaltyFor(24)).toBe(4);
+  });
+  it("treats negative distances as their absolute value", () => {
+    expect(penaltyFor(-12)).toBe(4);
+    expect(penaltyFor(-3)).toBe(1);
+  });
+});
 
+describe("classifyScore", () => {
+  it("0 → Optimal", () => { expect(classifyScore(0)).toBe("Optimal"); });
+  it("1–2 → Good", () => {
+    expect(classifyScore(1)).toBe("Good");
+    expect(classifyScore(2)).toBe("Good");
+  });
+  it("3–5 → Acceptable", () => {
+    expect(classifyScore(3)).toBe("Acceptable");
+    expect(classifyScore(5)).toBe("Acceptable");
+  });
+  it("6+ → Wide", () => {
+    expect(classifyScore(6)).toBe("Wide");
+    expect(classifyScore(20)).toBe("Wide");
+  });
+});
+
+describe("feedbackFor", () => {
+  it("returns the matching short feedback string", () => {
+    expect(feedbackFor("Optimal")).toBe("Smooth.");
+    expect(feedbackFor("Good")).toBe("Mostly smooth.");
+    expect(feedbackFor("Acceptable")).toBe("Some leaping.");
+    expect(feedbackFor("Wide")).toBe("Wide leap.");
+  });
+});
+
+// ── evaluateVoiceLeading ────────────────────────────────────────────────────
+
+describe("evaluateVoiceLeading", () => {
+  // Reference starting voicing: Cmaj7 close position
   const c3 = cell("c3", 48);
   const e3 = cell("e3", 52);
   const g3 = cell("g3", 55);
   const b3 = cell("b3", 59);
+  const start = [c3, e3, g3, b3];
 
-  const startVoicing = [c3, e3, g3, b3];
-  const startGuides  = [e3, b3];
-
-  it("returns false when non-guide tones stay put (common tones)", () => {
-    expect(detectWiderVoicing(startVoicing, startGuides, [c3, g3])).toBe(false);
+  it("scores Optimal when all voices stay (common tones)", () => {
+    const result = evaluateVoiceLeading(start, [c3, e3, g3, b3]);
+    expect(result.totalScore).toBe(0);
+    expect(result.classification).toBe("Optimal");
+    expect(result.feedback).toBe("Smooth.");
+    expect(result.hasLargeLeap).toBe(false);
+    expect(result.hasWideLeap).toBe(false);
+    expect(result.hasParallelShift).toBe(false);
   });
 
-  it("returns false when non-guide tones move by a step or less", () => {
-    const c3b = cell("c3b", 49); // C#3 — one semitone up
-    const g3b = cell("g3b", 57); // A3  — two semitones up
-    expect(detectWiderVoicing(startVoicing, startGuides, [c3b, g3b])).toBe(false);
+  it("scores Optimal when all voices move stepwise (≤2 semitones)", () => {
+    // C→C, E→F (1), G→G, B→Bb (1). all ≤2 → 0 penalty.
+    const f3 = cell("f3", 53);
+    const bb3 = cell("bb3", 58);
+    const result = evaluateVoiceLeading(start, [c3, f3, g3, bb3]);
+    expect(result.totalScore).toBe(0);
+    expect(result.classification).toBe("Optimal");
   });
 
-  it("returns false when non-guide tones move up to 11 semitones (sub-register)", () => {
-    // 11 semitones is a large interval but not a full register — should not flag.
-    const f3 = cell("f3", 53);   // F3 — 5 semitones from C3
-    const eb4 = cell("eb4", 63); // Eb4 — 8 semitones from G3
-    expect(detectWiderVoicing(startVoicing, startGuides, [f3, eb4])).toBe(false);
+  it("scores Good when one voice moves a 4th-5th (3–5 semitones)", () => {
+    // One voice moves 5 (penalty 1), others stepwise (0). total = 1 → Good.
+    const ab3 = cell("ab3", 56); // 1 from G3
+    const f3 = cell("f3", 53);   // 1 from E3
+    const d4 = cell("d4", 62);   // 3 from B3 (penalty 1)
+    const result = evaluateVoiceLeading(start, [c3, f3, ab3, d4]);
+    expect(result.totalScore).toBe(1);
+    expect(result.classification).toBe("Good");
+    expect(result.feedback).toBe("Mostly smooth.");
   });
 
-  it("returns true when a non-guide tone drops exactly one register (12 semitones)", () => {
-    const c2 = cell("c2", 36); // C2 — one octave below C3
-    expect(detectWiderVoicing(startVoicing, startGuides, [c2, g3])).toBe(true);
+  it("scores Good when one voice has a 6–11 semitone motion (penalty 2)", () => {
+    // Move B3 up to F#4 (7 semitones). Other crossings would force much
+    // larger motions, so bestMapping picks the literal pairing.
+    // Penalty: 0+0+0+2 = 2 → Good.
+    const fsharp4 = cell("fs4", 66);
+    const result = evaluateVoiceLeading(start, [c3, e3, g3, fsharp4]);
+    expect(result.totalScore).toBe(2);
+    expect(result.classification).toBe("Good");
+    expect(result.hasLargeLeap).toBe(true);
+    expect(result.hasWideLeap).toBe(false);
   });
 
-  it("returns true when both non-guide tones drop a register", () => {
-    const c2 = cell("c2", 36); // C2 — octave below C3
-    const g2 = cell("g2", 43); // G2 — octave below G3
-    expect(detectWiderVoicing(startVoicing, startGuides, [c2, g2])).toBe(true);
+  it("scores Acceptable for sums in 3–5 range", () => {
+    // 3 voices each move 5 semitones (penalty 1×3 = 3) → Acceptable.
+    const f3 = cell("f3", 53); // E3+1=F3 (1)
+    const b3b = cell("b3-down", 54); // C3→F3=5? No. Use bigger moves.
+    // C→F (5), E→A (5), G→C4 (5), B→F4? Too far. Just construct exact 3-penalty.
+    // C→F (5,p1), E→A (5,p1), G→C4 (5,p1), B→B (0). Sum = 3.
+    const f3_ = cell("f3", 53);
+    const a3_ = cell("a3", 57);
+    const c4_ = cell("c4", 60);
+    const result = evaluateVoiceLeading(start, [f3_, a3_, c4_, b3]);
+    expect(result.totalScore).toBe(3);
+    expect(result.classification).toBe("Acceptable");
+    expect(result.feedback).toBe("Some leaping.");
   });
 
-  it("returns true when both non-guide tones rise a register", () => {
-    // Both leap 12 — even optimal voice crossing produces maxJump >= 12.
-    const c4 = cell("c4", 60); // C4 — octave above C3
-    const g4 = cell("g4", 67); // G4 — octave above G3
-    expect(detectWiderVoicing(startVoicing, startGuides, [c4, g4])).toBe(true);
-  });
-
-  it("returns true when one non-guide tone drops a register, the other stays", () => {
-    // C3→C2 (12 down), G3→G3 (0). Crossing alt (G3→C2=19) costs more,
-    // so bestMapping picks literal. maxJump = 12 >= 12 → wider.
-    const c2 = cell("c2", 36);
-    expect(detectWiderVoicing(startVoicing, startGuides, [c2, g3])).toBe(true);
-  });
-
-  it("returns false when one voice rises a register while the other stays (voices converge)", () => {
-    // C3(48)+G3(55) → G3(55)+C4(60): bestMapping picks crossing C3→G3(7)+G3→C4(5).
-    // maxJump = 7, under the 12-semitone register threshold → smooth.
+  it("scores Wide when total penalties exceed 5", () => {
+    // All 4 voices leap an octave up: 4 × +4 = 16 → Wide.
     const c4 = cell("c4", 60);
-    expect(detectWiderVoicing(startVoicing, startGuides, [c4, g3])).toBe(false);
+    const e4 = cell("e4", 64);
+    const g4 = cell("g4", 67);
+    const b4 = cell("b4", 71);
+    const result = evaluateVoiceLeading(start, [c4, e4, g4, b4]);
+    expect(result.totalScore).toBe(16);
+    expect(result.classification).toBe("Wide");
+    expect(result.feedback).toBe("Wide leap.");
   });
 
-  it("returns false when maintaining a previously wide voicing (smooth continuation)", () => {
-    // Simulate: first round used C2/G2 (wide). Next round, move by step from there.
+  it("flags hasWideLeap when any voice moves ≥ 12 semitones", () => {
+    // Source: C2 + E3 + G3 + B3 → C3 + E3 + G3 + B3.
+    // Only C2 has to move; crossing C2 with any other voice produces a much
+    // larger total, so bestMapping picks literal C2→C3 = 12.
+    const c2 = cell("c2", 36);
+    const wideStart = [c2, e3, g3, b3];
+    const result = evaluateVoiceLeading(wideStart, [c3, e3, g3, b3]);
+    expect(result.hasWideLeap).toBe(true);
+    expect(result.hasLargeLeap).toBe(true);
+  });
+
+  it("flags hasLargeLeap (but not hasWideLeap) when motion is in the 6–11 range", () => {
+    const fsharp4 = cell("fs4", 66); // 7 semitones from B3
+    const result = evaluateVoiceLeading(start, [c3, e3, g3, fsharp4]);
+    expect(result.hasLargeLeap).toBe(true);
+    expect(result.hasWideLeap).toBe(false);
+  });
+
+  it("flags hasParallelShift when all voices move ≥6 in the same direction", () => {
+    // Whole chord up an octave — all voices +12, all up.
+    const c4 = cell("c4", 60);
+    const e4 = cell("e4", 64);
+    const g4 = cell("g4", 67);
+    const b4 = cell("b4", 71);
+    const result = evaluateVoiceLeading(start, [c4, e4, g4, b4]);
+    expect(result.hasParallelShift).toBe(true);
+  });
+
+  it("does not flag parallel shift when voices move in mixed directions", () => {
+    // Some up, some down.
+    const c2 = cell("c2", 36); // -12 from C3
+    const e4 = cell("e4", 64); // +12 from E3
+    const g4 = cell("g4", 67); // +12 from G3
+    const b3_ = b3; // 0
+    const result = evaluateVoiceLeading(start, [c2, e4, g4, b3_]);
+    expect(result.hasParallelShift).toBe(false);
+  });
+
+  it("preserves voice crossing as smooth when bestMapping finds it", () => {
+    // C3+G3+E3+B3 → G3+C4+E3+B3: bestMapping pairs C3→G3(7) + G3→C4(5)
+    // rather than the literal C3→C4(12). maxJump under crossing = 7, total 4
+    // (penalty 2+1+0+0). Score 3 → Acceptable, but never Wide.
+    const c4 = cell("c4", 60);
+    const result = evaluateVoiceLeading(start, [g3, c4, e3, b3]);
+    // Expect bestMapping found a smoother interpretation (no 12-leap surfaced)
+    expect(result.hasWideLeap).toBe(false);
+  });
+
+  it("scores Optimal when maintaining a previously wide voicing (no motion)", () => {
+    // Round 1: voicing is wide (C2 + G2 + E3 + B3). Round 2 voices barely move.
     const c2 = cell("c2", 36);
     const g2 = cell("g2", 43);
-    const prevWideVoicing = [c2, e3, g2, b3];  // wide non-guides: c2, g2
-    const prevGuides = [e3, b3];
-
-    // Next non-guides: move by a semitone each — smooth from wide position
-    const c2b = cell("c2b", 37);  // C#2 — one step from C2
-    const ab2 = cell("ab2", 44);  // Ab2 — one step from G2
-    expect(detectWiderVoicing(prevWideVoicing, prevGuides, [c2b, ab2])).toBe(false);
+    const wideStart = [c2, e3, g2, b3];
+    // Move each non-guide by 1, guide tones by 1: all ≤2 → 0 penalty.
+    const c2b = cell("c2b", 37);
+    const ab2 = cell("ab2", 44);
+    const f3 = cell("f3", 53);
+    const bb3 = cell("bb3", 58);
+    const result = evaluateVoiceLeading(wideStart, [c2b, f3, ab2, bb3]);
+    expect(result.classification).toBe("Optimal");
+    expect(result.feedback).toBe("Smooth.");
   });
 
-  it("returns false when startVoicing has fewer than 4 cells (guard)", () => {
-    expect(detectWiderVoicing([c3, e3], startGuides, [c3, g3])).toBe(false);
+  it("returns Optimal-with-empty arrays when input is empty (guard)", () => {
+    const result = evaluateVoiceLeading([], []);
+    expect(result.totalScore).toBe(0);
+    expect(result.classification).toBe("Optimal");
+    expect(result.perVoiceDistances).toEqual([]);
   });
 
-  it("returns false when newNonGuides has fewer than 2 cells (guard)", () => {
+  it("returns Optimal when source/target lengths differ (guard)", () => {
+    const result = evaluateVoiceLeading(start, [c3, e3]);
+    expect(result.classification).toBe("Optimal");
+  });
+
+  it("returns perVoiceDistances and perVoiceSigned for inspection", () => {
+    // C2 + E3 + G3 + B3 → C3 + E3 + G3 + B3 forces a literal C2→C3 = +12.
     const c2 = cell("c2", 36);
-    expect(detectWiderVoicing(startVoicing, startGuides, [c2])).toBe(false);
-  });
-
-  it("uses optimal voice pairing — picks the assignment with least total motion", () => {
-    // C3(48) and G3(55) start. Destination: Db3(49) and Ab3(56).
-    // Correct pairing: C3→Db3 (1), G3→Ab3 (1). maxJump = 1.
-    // Wrong pairing: C3→Ab3 (8), G3→Db3 (6). maxJump = 8.
-    // bestMapping should pick the correct one → not wider.
-    const db3 = cell("db3", 49);
-    const ab3 = cell("ab3", 56);
-    expect(detectWiderVoicing(startVoicing, startGuides, [db3, ab3])).toBe(false);
+    const wideStart = [c2, e3, g3, b3];
+    const result = evaluateVoiceLeading(wideStart, [c3, e3, g3, b3]);
+    expect(result.perVoiceDistances.length).toBe(4);
+    expect(Math.max(...result.perVoiceDistances)).toBe(12);
+    expect(result.perVoiceSigned.some((d) => d === 12)).toBe(true);
   });
 });
 
