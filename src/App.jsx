@@ -4,6 +4,7 @@ import { SettingsDrawer } from "./SettingsDrawer";
 import { scoreVoiceLeadingTransition } from "./voiceLeadingScore";
 import { resolveMidiCell as resolveMidiCellPure } from "./midiResolution";
 import { createMidiPassthrough, shouldForward } from "./midiOutput";
+import { detectWiderVoicing, shouldShowVoicingHint } from "./voicingUtils";
 import {
   NOTES,
   MAJOR_KEYS,
@@ -572,8 +573,8 @@ function App() {
         samePitchSet(combined, toChord.tones);
 
       let widerVoicing = false;
-      if (pitchOk && midiPlayMode) {
-        if (mode === "play") {
+      if (pitchOk) {
+        if (midiPlayMode && mode === "play") {
           // Play mode voice-leading: check whole chord move (4 voices)
           const sMidi = startVoicing.map((c) => withMidi(c));
           const tMidi = combined.map((c) => withMidi(c));
@@ -584,17 +585,17 @@ function App() {
             return false;
           }
         }
-        // Always check non-guide tone register regardless of mode
-        const guideMidis = movedGuides.map((c) => withMidi(c).midi).filter((m) => m != null);
-        const extraTones = selected.length > 0 ? selected : current;
-        if (guideMidis.length > 0) {
-          const registerOk = extraTones.every((c) => {
-            const m = withMidi(c).midi;
-            return m == null || guideMidis.some((gm) => Math.abs(m - gm) <= 12);
-          });
-          if (!registerOk) {
-            widerVoicing = true;
-          }
+        // Motion-based: flag wider voicing if any non-guide tone leapt more
+        // than a 5th from its starting position (see voicingUtils.js).
+        const newNonGuides = midiPlayMode
+          ? current.filter((c) => !movedGuides.some((mg) => mg.id === c.id))
+          : selected;
+        if (detectWiderVoicing(
+          startVoicing.map(withMidi),
+          startGuides.map(withMidi),
+          newNonGuides.map(withMidi)
+        )) {
+          widerVoicing = true;
         }
       }
 
@@ -789,8 +790,7 @@ function App() {
       "cell",
       isMidiHeld ? "midi-held" : "",
       isSelected ? "selected" : "",
-      isStartVoicing && stage.key === "IDENTIFY_GUIDES" && !isSelected ? "voicing-hint" : "",
-      isStartGuide && stage.key === "MOVE_GUIDES" && !isSelected && !isMovedGuide ? "voicing-hint" : "",
+      shouldShowVoicingHint(cell, stage.key, startVoicing, startGuides, movedGuides, isSelected, isMovedGuide) ? "voicing-hint" : "",
       isMovedGuide ? "moved-guide" : "",
       isFinalLockedGuide ? "locked final-guide" : "",
       isSuccessfulDestinationTone ? "success-tone" : ""
@@ -1017,7 +1017,7 @@ function App() {
         </div>
 
 
-        <div className={`step-row mode-${mode}${feedback && !awaitingNextRound && (mode === "learn" || feedback.type === "good") ? ` step-${feedback.type}` : awaitingNextRound ? (transitionSummary?.includes("wider voicing") ? " step-okay" : " step-good") : ""}`}>
+        <div className={`step-row mode-${mode}${feedback && !awaitingNextRound && (mode === "learn" || feedback.type === "good") ? ` step-${feedback.type}` : awaitingNextRound ? (transitionSummary?.toLowerCase().includes("wider voicing") ? " step-okay" : " step-good") : ""}`}>
           <div className="flow-strip" style={{ visibility: mode === "learn" ? "visible" : "hidden" }}>
             {STAGES.map((item, index) => {
               const actualIndex = STAGES.indexOf(item);
