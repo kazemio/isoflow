@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import {
   evaluateVoiceLeading,
   shouldShowVoicingHint,
+  isCellInPendingDestination,
   penaltyFor,
   classifyScore,
   feedbackFor,
@@ -307,5 +308,86 @@ describe("shouldShowVoicingHint", () => {
     expect(shouldShowVoicingHint(
       e3, "FILL_CHORD", startVoicing, startGuides, movedGuides, false, false
     )).toBe(false);
+  });
+
+  // ── Cross-layout (piano cells use the same logic as grid cells) ───────────
+
+  describe("piano-shaped cells", () => {
+    // Piano cells use ids like "piano-48". The function is id-driven, so this
+    // verifies the same logic applies regardless of cell origin.
+    const pianoC3 = { id: "piano-48", midi: 48, note: "C", row: 0, col: 0 };
+    const pianoE3 = { id: "piano-52", midi: 52, note: "E", row: 0, col: 4 };
+    const pianoG3 = { id: "piano-55", midi: 55, note: "G", row: 0, col: 7 };
+    const pianoB3 = { id: "piano-59", midi: 59, note: "B", row: 0, col: 11 };
+
+    const pianoStartVoicing = [pianoC3, pianoE3, pianoG3, pianoB3];
+    const pianoStartGuides = [pianoE3, pianoB3];
+
+    it("shows hint for unselected piano voicing cell during IDENTIFY_GUIDES", () => {
+      expect(shouldShowVoicingHint(
+        pianoC3, "IDENTIFY_GUIDES", pianoStartVoicing, pianoStartGuides, [],
+        /*isSelected*/ false, /*isMovedGuide*/ false
+      )).toBe(true);
+    });
+
+    it("shows hint for unmoved piano source guide during MOVE_GUIDES", () => {
+      expect(shouldShowVoicingHint(
+        pianoE3, "MOVE_GUIDES", pianoStartVoicing, pianoStartGuides, [],
+        false, false
+      )).toBe(true);
+    });
+
+    it("hides hint for a piano cell that is currently selected", () => {
+      expect(shouldShowVoicingHint(
+        pianoC3, "IDENTIFY_GUIDES", pianoStartVoicing, pianoStartGuides, [],
+        /*isSelected*/ true, false
+      )).toBe(false);
+    });
+  });
+});
+
+// ── isCellInPendingDestination ──────────────────────────────────────────────
+
+describe("isCellInPendingDestination", () => {
+  it("returns false when not awaiting next round", () => {
+    const cell = { id: "g-0-0", midi: 60, note: "C" };
+    const dest = [{ id: "x", midi: 60, note: "C" }];
+    expect(isCellInPendingDestination(cell, false, dest)).toBe(false);
+  });
+
+  it("returns false when pendingDestination is null", () => {
+    const cell = { id: "g-0-0", midi: 60, note: "C" };
+    expect(isCellInPendingDestination(cell, true, null)).toBe(false);
+  });
+
+  it("matches by midi when both cell and destination have midi", () => {
+    const cell = { id: "piano-60", midi: 60, note: "C" };
+    const dest = [{ midi: 60, note: "C" }];
+    expect(isCellInPendingDestination(cell, true, dest)).toBe(true);
+  });
+
+  it("does NOT match when midi differs even if note name matches", () => {
+    // Piano flow: distinct octaves of the same note name should not collide.
+    const cell = { id: "piano-72", midi: 72, note: "C" }; // C5
+    const dest = [{ midi: 60, note: "C" }];               // C4
+    expect(isCellInPendingDestination(cell, true, dest)).toBe(false);
+  });
+
+  it("falls back to note name when destination has no midi (mouse-clicked grid cell)", () => {
+    const cell = { id: "0-3", note: "F", midi: 53 };
+    const dest = [{ note: "F" }]; // dest has no midi — common in mouse mode
+    expect(isCellInPendingDestination(cell, true, dest)).toBe(true);
+  });
+
+  it("works for piano cells matched against MIDI-tagged destinations", () => {
+    // Lock-in: piano success-tone matches when MIDI numbers align.
+    const pianoKey = { midi: 64, note: "E" };
+    const dest = [
+      { midi: 60, note: "C" },
+      { midi: 64, note: "E" },
+      { midi: 67, note: "G" },
+      { midi: 71, note: "B" },
+    ];
+    expect(isCellInPendingDestination(pianoKey, true, dest)).toBe(true);
   });
 });

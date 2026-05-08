@@ -80,6 +80,18 @@ export function evaluateVoiceLeading(sourceCells, targetCells) {
   };
 }
 
+// Returns true when a cell is part of the just-completed destination chord
+// and should flash green. Matches by .midi when both sides have it (piano +
+// MIDI flow), otherwise falls back to note name (mouse-clicked grid cells
+// without a registered MIDI value).
+export function isCellInPendingDestination(cell, awaitingNextRound, pendingDestination) {
+  if (!awaitingNextRound || !pendingDestination) return false;
+  return pendingDestination.some((dest) => {
+    if (dest.midi != null && cell.midi != null) return dest.midi === cell.midi;
+    return dest.note === cell.note;
+  });
+}
+
 // ── Voicing-hint outline ────────────────────────────────────────────────────
 
 // Returns true when a cell should show the orange voicing-hint outline.

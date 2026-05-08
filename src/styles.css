@@ -780,17 +780,24 @@ button:disabled {
   background: #c06a10;
 }
 
-.piano-key.white.source-guide,
-.piano-key.black.source-guide {
-  box-shadow: none;
+.piano-key.white.voicing-hint:not(.selected):not(.midi-held):not(.moved-guide):not(.success-tone) {
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.08),
+    inset 0 0 0 2px rgba(242, 140, 40, 0.75);
 }
 
-.piano-key.white.moved-guide {
+.piano-key.black.voicing-hint:not(.selected):not(.midi-held):not(.moved-guide):not(.success-tone) {
+  box-shadow: inset 0 0 0 2px rgba(242, 140, 40, 0.85);
+}
+
+.piano-key.white.moved-guide,
+.piano-key.white.final-guide {
   background: #f28c28;
   color: white;
 }
 
-.piano-key.black.moved-guide {
+.piano-key.black.moved-guide,
+.piano-key.black.final-guide {
   background: #c06a10;
 }
 

@@ -4,7 +4,7 @@ import { SettingsDrawer } from "./SettingsDrawer";
 import { scoreVoiceLeadingTransition } from "./voiceLeadingScore";
 import { resolveMidiCell as resolveMidiCellPure } from "./midiResolution";
 import { createMidiPassthrough, shouldForward } from "./midiOutput";
-import { evaluateVoiceLeading, shouldShowVoicingHint } from "./voicingUtils";
+import { evaluateVoiceLeading, shouldShowVoicingHint, isCellInPendingDestination } from "./voicingUtils";
 import {
   NOTES,
   MAJOR_KEYS,
@@ -771,9 +771,7 @@ function App() {
 
 
 
-    const isSuccessfulDestinationTone =
-      awaitingNextRound &&
-      pendingDestination?.some((destinationCell) => destinationCell.id === cell.id);
+    const isSuccessfulDestinationTone = isCellInPendingDestination(cell, awaitingNextRound, pendingDestination);
 
     return [
       "cell",
@@ -796,25 +794,21 @@ function App() {
     if (!pianoCell) return key.isBlack ? "piano-key black" : "piano-key white";
 
     const curr = activeSelection();
-    const remainingDestinationTones = toChord.tones.filter((n) => !toChord.guide.includes(n));
     const isSelected = curr.some((c) => c.id === pianoCell.id);
     const pianoPressedIds = Object.values(midiPressedRef.current);
     const isMidiHeld = midiHeldCells.some((c) => c.id === pianoCell.id) ||
       pianoPressedIds.includes(pianoCell.id);
-    const isStartGuide = startGuides.some((c) => c.id === pianoCell.id);
     const isMovedGuide = movedGuides.some((c) => c.id === pianoCell.id);
-    const isSuccessTone = awaitingNextRound && pendingDestination?.some((c) =>
-      c.midi != null ? c.midi === key.midi : c.note === key.note
-    );
-
-
+    const isFinalLockedGuide = stage.key === "FILL_CHORD" && isMovedGuide;
+    const isSuccessTone = isCellInPendingDestination({ midi: key.midi, note: key.note }, awaitingNextRound, pendingDestination);
 
     return [
       key.isBlack ? "piano-key black" : "piano-key white",
       isSelected ? "selected" : "",
       isMidiHeld ? "midi-held" : "",
-      isStartGuide && stage.key !== "START_CHORD" ? "source-guide" : "",
+      shouldShowVoicingHint(pianoCell, stage.key, startVoicing, startGuides, movedGuides, isSelected, isMovedGuide) ? "voicing-hint" : "",
       isMovedGuide ? "moved-guide" : "",
+      isFinalLockedGuide ? "locked final-guide" : "",
       isSuccessTone ? "success-tone" : "",
     ].filter(Boolean).join(" ");
   }
