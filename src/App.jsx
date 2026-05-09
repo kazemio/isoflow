@@ -943,12 +943,23 @@ function App() {
 
           <label className="ctrl-prog">
             Progression
-            <input
-              list="progression-presets"
-              value={customText}
-              onChange={(e) => { setCustomText(e.target.value); resetAll(); }}
-              placeholder="ii V I"
-            />
+            <div className="prog-group">
+              <input
+                list="progression-presets"
+                value={customText}
+                onChange={(e) => { setCustomText(e.target.value); resetAll(); }}
+                placeholder="ii V I"
+              />
+              <button
+                type="button"
+                className="prog-dice-btn"
+                onClick={() => { const p = generateRandomProgression(); setCustomText(p); resetAll(); }}
+                title="Random progression"
+                aria-label="Random progression"
+              >
+                <Dices size={18} />
+              </button>
+            </div>
             <datalist id="progression-presets">
               {Object.entries(PROGRESSION_OPTIONS).map(([name, chords]) => (
                 <option key={name} value={chords.join(" ")} />
@@ -956,30 +967,15 @@ function App() {
             </datalist>
           </label>
 
-          <label className="ctrl-random">
-            Random
-            <button
-              type="button"
-              className="random-button"
-              onClick={() => { const p = generateRandomProgression(); setCustomText(p); resetAll(); }}
-              title="Random"
-            >
-              <Dices size={15} />
-            </button>
-          </label>
-
-          <label className="ctrl-settings">
-            Settings
-            <button
-              type="button"
-              className="random-button"
-              onClick={() => setSettingsOpen(true)}
-              title="Settings"
-              aria-label="Open settings"
-            >
-              <Settings size={15} />
-            </button>
-          </label>
+          <button
+            type="button"
+            className="icon-button ctrl-settings"
+            onClick={() => setSettingsOpen(true)}
+            title="Settings"
+            aria-label="Open settings"
+          >
+            <Settings size={18} />
+          </button>
         </div>
 
         <div className="mode-row">
