@@ -1,26 +1,26 @@
-import { distance } from "./musicUtils";
+import { gridDistance } from "./musicUtils";
 
 // Branch 1: piano view — exact MIDI-number lookup in PIANO_CELLS
 export function resolveMidiCellPiano(noteNumber, pianoCells) {
   return pianoCells.find((c) => c.midi === noteNumber) ?? null;
 }
 
-// Branch 2: octave-mapping mode — pick the grid cell whose estimated MIDI
-// (pitchClass + midiOffset) is closest to the actual MIDI note number.
-export function resolveMidiCellOctave(noteNumber, gridCells, midiOffset) {
+// Branch 2: octave-mapping mode — pick the grid cell whose intrinsic MIDI is
+// closest to the actual MIDI note number.
+export function resolveMidiCellOctave(noteNumber, gridCells) {
   if (gridCells.length === 0) return null;
   return gridCells
-    .map((c) => ({ c, diff: Math.abs((c.pitchClass + midiOffset) - noteNumber) }))
+    .map((c) => ({ c, diff: Math.abs(c.midi - noteNumber) }))
     .sort((a, b) => a.diff - b.diff)[0].c;
 }
 
-// Branch 3: proximity mode — pick the grid cell closest (by distance) to the
-// anchor point. anchor must be { row, col } — pass the grid centre when no
-// anchor is established yet.
+// Branch 3: proximity mode — pick the grid cell closest (by row/col layout
+// distance) to the anchor point. Anchor must be `{ row, col }` — pass the
+// grid centre when no anchor is established yet.
 export function resolveMidiCellProximity(noteNumber, gridCells, anchor) {
   if (gridCells.length === 0) return null;
   return gridCells
-    .map((c) => ({ c, d: distance(anchor, c) }))
+    .map((c) => ({ c, d: gridDistance(anchor, c) }))
     .sort((a, b) => a.d - b.d)[0].c;
 }
 
@@ -28,18 +28,18 @@ export function resolveMidiCellProximity(noteNumber, gridCells, anchor) {
 // dependencies as explicit parameters so it can be called from tests.
 // NOTE: does NOT set the anchor as a side effect — the caller (App.jsx) is
 // responsible for initialising registerAnchorRef on first use.
-export function resolveMidiCell(noteNumber, { viewMode, pianoCells, grid, useOctaveMapping, midiOffset, anchor }) {
+export function resolveMidiCell(noteNumber, { viewMode, pianoCells, grid, useOctaveMapping, anchor }) {
   if (viewMode === "piano") {
     const pianoCell = resolveMidiCellPiano(noteNumber, pianoCells);
     if (pianoCell) return pianoCell;
   }
 
   const pitchClass = ((noteNumber % 12) + 12) % 12;
-  const gridCells = grid.flat().filter((c) => ((c.pitchClass % 12) + 12) % 12 === pitchClass);
+  const gridCells = grid.flat().filter((c) => c.pitchClass === pitchClass);
   if (gridCells.length === 0) return null;
 
   if (useOctaveMapping) {
-    return resolveMidiCellOctave(noteNumber, gridCells, midiOffset);
+    return resolveMidiCellOctave(noteNumber, gridCells);
   }
 
   const target = anchor ?? { row: (grid.length - 1) / 2, col: (grid[0].length - 1) / 2 };

@@ -26,9 +26,8 @@ export const STAGES = [
   { key: "FILL_CHORD",     title: "Fill destination chord." },
 ];
 
-// LinnStrument 200 default base note
+// LinnStrument 200 default base note — MIDI of grid bottom-left cell.
 export const MIDI_BASE_NOTE = 30;
-export const MIDI_OFFSET = MIDI_BASE_NOTE - 6; // grid startNote=6
 
 export const PIANO_MIDI_START = 48;
 export const PIANO_MIDI_END   = 84;
@@ -70,19 +69,22 @@ export function buildChordsForKey(key) {
 
 // ── Grid ────────────────────────────────────────────────────────────────────
 
-export function buildGrid(rows = 6, cols = 12, startNote = 6) {
+// Each cell carries `.midi` (canonical pitch, 0–127) and `.pitchClass` (0–11).
+// Grid is laid out in 4ths (each row up = +5 semitones from the row below).
+export function buildGrid(rows = 6, cols = 12, baseMidi = MIDI_BASE_NOTE) {
   const grid = [];
   for (let visualRow = 0; visualRow < rows; visualRow++) {
     const rowOffset = (rows - 1 - visualRow) * 5;
     const cells = [];
     for (let col = 0; col < cols; col++) {
-      const pitchClass = col + rowOffset + startNote;
+      const midi = baseMidi + col + rowOffset;
       cells.push({
         id: `${visualRow}-${col}`,
         row: visualRow,
         col,
-        pitchClass,
-        note: normalizeNote(pitchClass),
+        midi,
+        pitchClass: ((midi % 12) + 12) % 12,
+        note: normalizeNote(midi),
       });
     }
     grid.push(cells);
@@ -189,8 +191,18 @@ export function containsPitchSet(cells, targetNotes) {
   return targetNotes.every((note) => selected.includes(note));
 }
 
+// Voice-leading motion distance — always semitones. Both inputs MUST carry
+// `.midi` (every cell does, post-canonical refactor); failure to do so is a
+// programming error, not a fallback condition.
 export function distance(a, b) {
-  if (a.midi != null && b.midi != null) return Math.abs(a.midi - b.midi);
+  return Math.abs(a.midi - b.midi);
+}
+
+// Layout-coordinate distance for input mapping (e.g. proximity-based MIDI →
+// grid-cell resolution). Operates on `.row` / `.col` only — used when picking
+// the visually-nearest cell to an anchor on the LinnStrument-style grid.
+// Row weighted because rows are vertically taller than columns are wide.
+export function gridDistance(a, b) {
   return Math.abs(a.col - b.col) + Math.abs(a.row - b.row) * 1.35;
 }
 
@@ -219,25 +231,66 @@ export function bestMapping(fromCells, toCells) {
   return best;
 }
 
-export function generateGuideCandidates(startGuides, toGuideNotes, grid) {
-  const allCells = grid.flat();
-  const candidatesByNote = toGuideNotes.map((note) => allCells.filter((cell) => cell.note === note));
+// Build an abstract voice (no layout fields) at a given MIDI value.
+export function makeVoice(midi) {
+  const pc = ((midi % 12) + 12) % 12;
+  return {
+    id: `voice-${midi}`,
+    midi,
+    pitchClass: pc,
+    note: NOTES[pc],
+  };
+}
+
+// Layout-agnostic guide-candidate generator. Enumerates every pair of MIDI
+// notes within the provided range whose pitch classes match `toGuideNotes`,
+// plus any reordered pair from `startGuides` that already satisfies the set
+// (a "common-tone hold" candidate).
+//
+// Returns an array of `[voice, voice]` pairs; voices have `.midi`,
+// `.pitchClass`, `.note`, `.id`. Callers compare against these via
+// `bestMapping` which uses MIDI distance.
+export function generateGuideCandidates(startGuides, toGuideNotes, options = {}) {
+  const { midiMin = 0, midiMax = 127 } = options;
+
+  const targetPCs = toGuideNotes.map((note) => {
+    const pc = NOTES.indexOf(note);
+    if (pc !== -1) return pc;
+    const map = { "C#": 1, "Db": 1, "D#": 3, "Eb": 3, "F#": 6, "Gb": 6, "G#": 8, "Ab": 8, "A#": 10, "Bb": 10 };
+    return map[note];
+  });
+
+  const candidatesByNote = targetPCs.map((pc) => {
+    const voices = [];
+    for (let m = midiMin; m <= midiMax; m++) {
+      if ((((m % 12) + 12) % 12) === pc) voices.push(makeVoice(m));
+    }
+    return voices;
+  });
+
   const out = [];
   for (const a of candidatesByNote[0]) {
     for (const b of candidatesByNote[1]) {
-      if (a.id !== b.id) out.push([a, b]);
+      if (a.midi !== b.midi) out.push([a, b]);
     }
   }
+
+  // Common-tone holds: any reordering of the user's starting guides that
+  // already matches the destination pitch set, expressed as abstract voices
+  // (uniform output shape; downstream comparison is by `.midi`).
   for (const first of startGuides) {
     for (const second of startGuides) {
       if (first.id === second.id) continue;
-      const pair = [first, second];
-      if (samePitchSet(pair, toGuideNotes)) out.push(pair);
+      if (samePitchSet([first, second], toGuideNotes)) {
+        out.push([makeVoice(first.midi), makeVoice(second.midi)]);
+      }
     }
   }
+
+  // Dedupe by unordered MIDI pair.
   const seen = new Set();
   return out.filter((pair) => {
-    const key = pair.map((cell) => cell.id).sort().join("|");
+    const key = [pair[0].midi, pair[1].midi].sort((x, y) => x - y).join("|");
     if (seen.has(key)) return false;
     seen.add(key);
     return true;

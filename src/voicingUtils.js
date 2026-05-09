@@ -55,7 +55,7 @@ export function evaluateVoiceLeading(sourceCells, targetCells) {
   const mapping = bestMapping(sourceCells, targetCells);
   const pairs = mapping?.pairs ?? [];
 
-  const perVoiceSigned = pairs.map((p) => (p.to.midi ?? 0) - (p.from.midi ?? 0));
+  const perVoiceSigned = pairs.map((p) => p.to.midi - p.from.midi);
   const perVoiceDistances = perVoiceSigned.map((d) => Math.abs(d));
 
   const totalScore = perVoiceDistances.reduce((sum, d) => sum + penaltyFor(d), 0);
@@ -81,13 +81,15 @@ export function evaluateVoiceLeading(sourceCells, targetCells) {
 }
 
 // Returns true when a cell is part of the just-completed destination chord
-// and should flash green. Matches by .midi when both sides have it (piano +
-// MIDI flow), otherwise falls back to note name (mouse-clicked grid cells
-// without a registered MIDI value).
+// and should flash green. Matches by id first (specific cell within a layout
+// — the most precise check, prevents same-note cells in other octaves from
+// also lighting up), then by MIDI for cross-layout, then by note name as a
+// last resort.
 export function isCellInPendingDestination(cell, awaitingNextRound, pendingDestination) {
   if (!awaitingNextRound || !pendingDestination) return false;
   return pendingDestination.some((dest) => {
-    if (dest.midi != null && cell.midi != null) return dest.midi === cell.midi;
+    if (cell.id != null && dest.id != null) return dest.id === cell.id;
+    if (cell.midi != null && dest.midi != null) return dest.midi === cell.midi;
     return dest.note === cell.note;
   });
 }

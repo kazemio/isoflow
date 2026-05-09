@@ -10,21 +10,21 @@ import {
 
 describe("buildGrid", () => {
   it("produces the right number of rows and cols", () => {
-    const g = buildGrid(8, 16, 6);
+    const g = buildGrid(8, 16);
     expect(g.length).toBe(8);
     expect(g[0].length).toBe(16);
     expect(g[7].length).toBe(16);
   });
 
   it("bottom-left cell of default grid (8×8, startNote=6) is Gb", () => {
-    const g = buildGrid(8, 8, 6);
+    const g = buildGrid(8, 8);
     const bottomLeft = g[7][0];
     expect(bottomLeft.note).toBe("Gb");
     expect(bottomLeft.id).toBe("7-0");
   });
 
   it("row 0 col 0 is higher than row 7 col 0 by 5 semitones/row × 7 rows", () => {
-    const g = buildGrid(8, 8, 6);
+    const g = buildGrid(8, 8);
     const topLeft    = g[0][0];
     const bottomLeft = g[7][0];
     const diff = (topLeft.pitchClass - bottomLeft.pitchClass + 12000) % 12;
@@ -33,7 +33,7 @@ describe("buildGrid", () => {
   });
 
   it("adjacent columns differ by 1 semitone (pitch class)", () => {
-    const g = buildGrid(4, 8, 6);
+    const g = buildGrid(4, 8);
     for (const row of g) {
       for (let col = 0; col < row.length - 1; col++) {
         const diff = (row[col + 1].pitchClass - row[col].pitchClass + 1200) % 12;
@@ -43,7 +43,7 @@ describe("buildGrid", () => {
   });
 
   it("adjacent rows differ by 5 semitones (isomorphic layout)", () => {
-    const g = buildGrid(4, 8, 6);
+    const g = buildGrid(4, 8);
     for (let row = 0; row < g.length - 1; row++) {
       for (let col = 0; col < g[row].length; col++) {
         const upperPC = g[row][col].pitchClass;
@@ -55,7 +55,7 @@ describe("buildGrid", () => {
   });
 
   it("cell ids follow visualRow-col format", () => {
-    const g = buildGrid(3, 4, 6);
+    const g = buildGrid(3, 4);
     expect(g[0][0].id).toBe("0-0");
     expect(g[2][3].id).toBe("2-3");
   });

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   distance,
+  gridDistance,
   permutations,
   bestMapping,
   samePitchSet,
@@ -20,7 +21,7 @@ function gridCell(id, row, col, pitchClass, note) {
 }
 
 describe("distance", () => {
-  it("uses MIDI semitone distance when both cells have midi", () => {
+  it("returns MIDI semitone distance (always — cells must have .midi)", () => {
     const a = midiCell("a", 60, "C", 0);
     const b = midiCell("b", 64, "E", 4);
     expect(distance(a, b)).toBe(4);
@@ -32,16 +33,29 @@ describe("distance", () => {
     expect(distance(a, b)).toBe(distance(b, a));
   });
 
-  it("falls back to grid distance (Manhattan × row-weight) without midi", () => {
-    const a = gridCell("a", 0, 0, 0, "C");
-    const b = gridCell("b", 2, 3, 5, "F");
-    // |col diff| + |row diff| * 1.35 = 3 + 2*1.35 = 5.7
-    expect(distance(a, b)).toBeCloseTo(5.7, 5);
-  });
-
   it("returns 0 for same cell", () => {
     const a = midiCell("a", 60, "C", 0);
     expect(distance(a, a)).toBe(0);
+  });
+
+  it("layout-equivalence: a grid cell and a piano cell at the same MIDI compare as 0", () => {
+    const gridLikeC4 = { id: "0-0", row: 0, col: 0, midi: 60, pitchClass: 0, note: "C" };
+    const pianoC4    = { id: "piano-60", row: 0, col: 12, midi: 60, pitchClass: 0, note: "C" };
+    expect(distance(gridLikeC4, pianoC4)).toBe(0);
+  });
+});
+
+describe("gridDistance", () => {
+  it("uses Manhattan with row weighted 1.35× (for input mapping only, NOT motion math)", () => {
+    const a = { row: 0, col: 0 };
+    const b = { row: 2, col: 3 };
+    expect(gridDistance(a, b)).toBeCloseTo(3 + 2 * 1.35, 5);
+  });
+
+  it("is symmetric", () => {
+    const a = { row: 1, col: 4 };
+    const b = { row: 3, col: 2 };
+    expect(gridDistance(a, b)).toBe(gridDistance(b, a));
   });
 });
 
@@ -148,10 +162,11 @@ describe("containsPitchSet", () => {
 });
 
 describe("generateGuideCandidates", () => {
-  const GRID = buildGrid(4, 8, 6);
+  // MIDI range covering roughly an octave or two for testing.
+  const range = { midiMin: 48, midiMax: 71 }; // C3..B4
 
-  it("returns pairs of cells whose notes match the guide note names", () => {
-    const candidates = generateGuideCandidates([], ["B", "F"], GRID);
+  it("returns pairs of voices whose notes match the guide note names", () => {
+    const candidates = generateGuideCandidates([], ["B", "F"], range);
     for (const [a, b] of candidates) {
       const notes = new Set([a.note, b.note]);
       expect(notes.has("B")).toBe(true);
@@ -159,24 +174,32 @@ describe("generateGuideCandidates", () => {
     }
   });
 
-  it("no duplicate (unordered) pairs", () => {
-    const candidates = generateGuideCandidates([], ["B", "F"], GRID);
+  it("no duplicate (unordered) MIDI pairs", () => {
+    const candidates = generateGuideCandidates([], ["B", "F"], range);
     const seen = new Set();
     for (const [a, b] of candidates) {
-      const key = [a.id, b.id].sort().join("|");
+      const key = [a.midi, b.midi].sort((x, y) => x - y).join("|");
       expect(seen.has(key)).toBe(false);
       seen.add(key);
     }
   });
 
-  it("includes start-guide cells that already match the target note names", () => {
-    const allCells = GRID.flat();
-    const bCell = allCells.find((c) => c.note === "B");
-    const fCell = allCells.find((c) => c.note === "F");
-    // startGuides that are already correct notes: they should be included
-    const candidates = generateGuideCandidates([bCell, fCell], ["B", "F"], GRID);
+  it("emits voices within the requested MIDI range", () => {
+    const candidates = generateGuideCandidates([], ["B", "F"], range);
+    for (const [a, b] of candidates) {
+      expect(a.midi).toBeGreaterThanOrEqual(range.midiMin);
+      expect(a.midi).toBeLessThanOrEqual(range.midiMax);
+      expect(b.midi).toBeGreaterThanOrEqual(range.midiMin);
+      expect(b.midi).toBeLessThanOrEqual(range.midiMax);
+    }
+  });
+
+  it("includes a candidate at the MIDI of start guides that already match", () => {
+    const bCell = midiCell("b3", 59, "B", 11);
+    const fCell = midiCell("f3", 53, "F", 5);
+    const candidates = generateGuideCandidates([bCell, fCell], ["B", "F"], range);
     const containsStartPair = candidates.some(
-      ([a, b]) => new Set([a.id, b.id]).has(bCell.id) && new Set([a.id, b.id]).has(fCell.id)
+      ([a, b]) => new Set([a.midi, b.midi]).has(59) && new Set([a.midi, b.midi]).has(53)
     );
     expect(containsStartPair).toBe(true);
   });

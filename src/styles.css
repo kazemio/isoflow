@@ -749,14 +749,6 @@ button:disabled {
   margin-bottom: 14px;
 }
 
-.debug-midi {
-  font-size: 11px;
-  font-weight: 700;
-  color: #8b8b93;
-  letter-spacing: 0.06em;
-  text-align: center;
-  margin-top: 10px;
-}
 
 .piano-range-label {
   text-align: center;
@@ -841,9 +833,14 @@ button:disabled {
   background: #c06a10;
 }
 
-.piano-key.success-tone {
+.piano-key.success-tone,
+.piano-key.success-tone.selected,
+.piano-key.success-tone.midi-held,
+.piano-key.success-tone.moved-guide,
+.piano-key.success-tone.final-guide {
+  background: #2d7a43 !important;
+  color: white !important;
   animation: success-flash 0.5s ease forwards;
-  color: white;
 }
 
 /* ── Settings drawer ── */

@@ -349,6 +349,24 @@ describe("shouldShowVoicingHint", () => {
 // ── isCellInPendingDestination ──────────────────────────────────────────────
 
 describe("isCellInPendingDestination", () => {
+  it("matches by id when both cells have ids (specific cell, same layout)", () => {
+    // Same note name across different cells (octaves) must NOT match — only
+    // the specific cell selected. This prevents the regression where every
+    // grid cell with the chord's note name would light up green.
+    const cell = { id: "0-3", note: "C", pitchClass: 24 };
+    const dest = [{ id: "0-3", note: "C", pitchClass: 24 }];
+    expect(isCellInPendingDestination(cell, true, dest)).toBe(true);
+  });
+
+  it("rejects same-note cells from different positions (id mismatch)", () => {
+    // Two grid cells with note "C" but different ids (different octaves on
+    // the isomorphic grid): only the cell that was actually selected lights up.
+    const cellA = { id: "0-3", note: "C", pitchClass: 24 };
+    const cellB = { id: "5-0", note: "C", pitchClass: 12 };
+    const dest = [cellA];
+    expect(isCellInPendingDestination(cellB, true, dest)).toBe(false);
+  });
+
   it("returns false when not awaiting next round", () => {
     const cell = { id: "g-0-0", midi: 60, note: "C" };
     const dest = [{ id: "x", midi: 60, note: "C" }];
@@ -389,5 +407,88 @@ describe("isCellInPendingDestination", () => {
       { midi: 71, note: "B" },
     ];
     expect(isCellInPendingDestination(pianoKey, true, dest)).toBe(true);
+  });
+
+  it("matches ALL 4 cells of a completed destination chord, including moved-guide cells", () => {
+    // Regression: when FILL_CHORD completes, pendingDestination contains 4 cells —
+    // two that were the moved guide tones, two that the user newly selected as
+    // non-guide tones. ALL four must match (so all four flash green together).
+    // The CSS handles the visual override of moved-guide orange; this test
+    // ensures the JS contract returns true for every destination cell.
+    const movedGuideE = { id: "piano-53", midi: 53, note: "F" };  // guide moved E→F
+    const movedGuideB = { id: "piano-58", midi: 58, note: "Bb" }; // guide moved B→Bb
+    const nonGuide1 = { id: "piano-48", midi: 48, note: "C" };
+    const nonGuide2 = { id: "piano-55", midi: 55, note: "G" };
+    const pendingDestination = [movedGuideE, movedGuideB, nonGuide1, nonGuide2];
+
+    for (const cell of pendingDestination) {
+      expect(
+        isCellInPendingDestination(cell, true, pendingDestination)
+      ).toBe(true);
+    }
+  });
+
+  it("matches all 4 grid cells of a completed destination chord", () => {
+    // Same scenario as above but with grid-style cell ids — ensures the id-first
+    // match works for the grid layout too.
+    const movedA = { id: "3-2", note: "F", pitchClass: 29 };
+    const movedB = { id: "2-5", note: "Bb", pitchClass: 34 };
+    const newC = { id: "5-0", note: "C", pitchClass: 24 };
+    const newD = { id: "4-3", note: "G", pitchClass: 31 };
+    const pendingDestination = [movedA, movedB, newC, newD];
+
+    for (const cell of pendingDestination) {
+      expect(
+        isCellInPendingDestination(cell, true, pendingDestination)
+      ).toBe(true);
+    }
+  });
+});
+
+// ── Layout-equivalence: identical MIDI motion → identical score ─────────────
+
+describe("layout equivalence", () => {
+  // Cells with grid-style ids (`row-col`) vs piano-style ids (`piano-N`).
+  // Identical MIDI sequences must produce identical scoring results.
+  function gridLike(row, col, midi) {
+    return { id: `${row}-${col}`, row, col, midi, pitchClass: ((midi % 12) + 12) % 12, note: "X" };
+  }
+  function pianoLike(midi) {
+    return { id: `piano-${midi}`, row: 0, col: midi - 48, midi, pitchClass: ((midi % 12) + 12) % 12, note: "X" };
+  }
+
+  it("evaluateVoiceLeading produces identical results for grid-shaped vs piano-shaped cells", () => {
+    const sourceMidi = [60, 64, 67, 71]; // Cmaj7
+    const targetMidi = [60, 65, 67, 70]; // C7-ish (E→F, B→Bb)
+
+    const gridSource = sourceMidi.map((m, i) => gridLike(0, i, m));
+    const gridTarget = targetMidi.map((m, i) => gridLike(1, i, m));
+    const pianoSource = sourceMidi.map(pianoLike);
+    const pianoTarget = targetMidi.map(pianoLike);
+
+    const gridResult = evaluateVoiceLeading(gridSource, gridTarget);
+    const pianoResult = evaluateVoiceLeading(pianoSource, pianoTarget);
+
+    expect(gridResult.totalScore).toBe(pianoResult.totalScore);
+    expect(gridResult.classification).toBe(pianoResult.classification);
+    expect(gridResult.feedback).toBe(pianoResult.feedback);
+    expect(gridResult.hasLargeLeap).toBe(pianoResult.hasLargeLeap);
+    expect(gridResult.hasWideLeap).toBe(pianoResult.hasWideLeap);
+    expect(gridResult.hasParallelShift).toBe(pianoResult.hasParallelShift);
+  });
+
+  it("a grid C3 → piano B2 transition scores 1 semitone (not Manhattan grid distance)", () => {
+    const c3Grid = gridLike(7, 0, 48);  // C3 on grid
+    const b2Grid = gridLike(7, 0, 47);  // B2 — same grid cell, different MIDI
+    const c3Piano = pianoLike(48);
+    const b2Piano = pianoLike(47);
+
+    // Single-voice motion: 48 → 47 = 1 semitone. Same regardless of layout.
+    const gridScore = evaluateVoiceLeading([c3Grid], [b2Grid]);
+    const pianoScore = evaluateVoiceLeading([c3Piano], [b2Piano]);
+
+    expect(gridScore.perVoiceDistances[0]).toBe(1);
+    expect(pianoScore.perVoiceDistances[0]).toBe(1);
+    expect(gridScore.totalScore).toBe(pianoScore.totalScore);
   });
 });
