@@ -5,9 +5,9 @@ import {
   resolveMidiCellProximity,
   resolveMidiCell,
 } from "../midiResolution";
-import { buildGrid, buildPianoCells, MIDI_OFFSET, PIANO_MIDI_START } from "../musicUtils";
+import { buildGrid, buildPianoCells, PIANO_MIDI_START } from "../musicUtils";
 
-const GRID = buildGrid(8, 8, 6);
+const GRID = buildGrid(8, 8);
 const PIANO_CELLS = buildPianoCells();
 
 // ── resolveMidiCellPiano ─────────────────────────────────────────────────────
@@ -41,26 +41,23 @@ describe("resolveMidiCellPiano", () => {
 describe("resolveMidiCellOctave", () => {
   const ALL_GRID_CELLS = GRID.flat();
 
-  it("returns the cell whose pitchClass + midiOffset is closest to the note", () => {
-    // LinnStrument: MIDI_OFFSET = 24. A cell with pitchClass = 6 (Gb) estimates midi = 30.
-    // MIDI note 30 should resolve to a Gb cell (pitchClass 6).
-    const gbCells = ALL_GRID_CELLS.filter((c) => ((c.pitchClass % 12) + 12) % 12 === 6);
-    const cell = resolveMidiCellOctave(30, gbCells, MIDI_OFFSET);
+  it("returns the cell whose intrinsic MIDI is closest to the played note", () => {
+    // Bottom-left cell has midi 30 (Gb-1). MIDI note 30 should resolve to it.
+    const gbCells = ALL_GRID_CELLS.filter((c) => c.pitchClass === 6);
+    const cell = resolveMidiCellOctave(30, gbCells);
     expect(cell).not.toBeNull();
-    expect(((cell.pitchClass % 12) + 12) % 12).toBe(6); // Gb pitch class
+    expect(cell.pitchClass).toBe(6);
   });
 
   it("picks the closest-octave cell when multiple candidates share pitch class", () => {
-    // Pick F cells (pitchClass 5). Estimated MIDI = pitchClass + 24 varies per row.
-    const fCells = ALL_GRID_CELLS.filter((c) => ((c.pitchClass % 12) + 12) % 12 === 5);
-    expect(fCells.length).toBeGreaterThan(1); // multiple F cells exist
-    const target = fCells[0].pitchClass + MIDI_OFFSET; // exact match for first cell
-    const resolved = resolveMidiCellOctave(target, fCells, MIDI_OFFSET);
+    const fCells = ALL_GRID_CELLS.filter((c) => c.pitchClass === 5);
+    expect(fCells.length).toBeGreaterThan(1);
+    const resolved = resolveMidiCellOctave(fCells[0].midi, fCells);
     expect(resolved.id).toBe(fCells[0].id);
   });
 
   it("returns null for an empty cell list", () => {
-    expect(resolveMidiCellOctave(60, [], MIDI_OFFSET)).toBeNull();
+    expect(resolveMidiCellOctave(60, [])).toBeNull();
   });
 });
 
@@ -108,7 +105,6 @@ describe("resolveMidiCell", () => {
     pianoCells: PIANO_CELLS,
     grid: GRID,
     useOctaveMapping: false,
-    midiOffset: MIDI_OFFSET,
     anchor: null,
     ...overrides,
   });
@@ -121,35 +117,32 @@ describe("resolveMidiCell", () => {
     });
 
     it("falls through to grid resolution when MIDI is outside piano range", () => {
-      // MIDI 20 has no piano cell; should fall through to grid
+      // MIDI 20 has no piano cell; should fall through to grid (pc 8 = Ab).
       const cell = resolveMidiCell(20, opts({ viewMode: "piano" }));
-      // pitch class of 20 = 8 (Ab). Grid has Ab cells.
       expect(cell).not.toBeNull();
-      expect(((cell.pitchClass % 12) + 12) % 12).toBe(8);
+      expect(cell.pitchClass).toBe(8);
     });
   });
 
   describe("octave mapping mode", () => {
-    it("uses pitchClass + midiOffset proximity", () => {
+    it("picks the grid cell whose intrinsic MIDI is closest to the played note", () => {
       const cell = resolveMidiCell(30, opts({ useOctaveMapping: true }));
-      // MIDI 30 → pitchClass 6 (Gb). Closest grid cell by offset estimate.
       expect(cell).not.toBeNull();
-      expect(((cell.pitchClass % 12) + 12) % 12).toBe(6);
+      expect(cell.pitchClass).toBe(6); // Gb
     });
   });
 
   describe("proximity mode (training mode)", () => {
     it("with no anchor, resolves to the cell nearest the grid centre", () => {
-      const cell = resolveMidiCell(60, opts({ anchor: null })); // C, no anchor
+      const cell = resolveMidiCell(60, opts({ anchor: null }));
       expect(cell).not.toBeNull();
-      expect(((cell.pitchClass % 12) + 12) % 12).toBe(0); // C pitch class
+      expect(cell.pitchClass).toBe(0); // C
     });
 
     it("with an anchor, resolves to the cell nearest that anchor", () => {
-      const anchor = GRID[7][0]; // bottom-left cell
+      const anchor = GRID[7][0];
       const cell = resolveMidiCell(60, opts({ anchor }));
-      // Should pick the C cell nearest the bottom-left
-      const cCells = GRID.flat().filter((c) => ((c.pitchClass % 12) + 12) % 12 === 0);
+      const cCells = GRID.flat().filter((c) => c.pitchClass === 0);
       const nearest = cCells.slice().sort(
         (a, b) =>
           Math.abs(a.row - anchor.row) + Math.abs(a.col - anchor.col) -
@@ -159,9 +152,8 @@ describe("resolveMidiCell", () => {
     });
 
     it("returns null when pitch class has no match on the grid", () => {
-      // Build a 1x1 grid with only Gb (pitchClass 6)
-      const tinyGrid = [[{ id: "0-0", row: 0, col: 0, pitchClass: 6, note: "Gb" }]];
-      const cell = resolveMidiCell(60, opts({ grid: tinyGrid, anchor: null })); // C has no cell
+      const tinyGrid = [[{ id: "0-0", row: 0, col: 0, midi: 30, pitchClass: 6, note: "Gb" }]];
+      const cell = resolveMidiCell(60, opts({ grid: tinyGrid, anchor: null }));
       expect(cell).toBeNull();
     });
   });
@@ -169,12 +161,12 @@ describe("resolveMidiCell", () => {
   describe("note number edge cases", () => {
     it("handles MIDI 0 (C-1)", () => {
       const cell = resolveMidiCell(0, opts());
-      if (cell) expect(((cell.pitchClass % 12) + 12) % 12).toBe(0);
+      if (cell) expect(cell.pitchClass).toBe(0);
     });
 
     it("handles MIDI 127 (G9)", () => {
       const cell = resolveMidiCell(127, opts());
-      if (cell) expect(((cell.pitchClass % 12) + 12) % 12).toBe(7);
+      if (cell) expect(cell.pitchClass).toBe(7);
     });
   });
 });

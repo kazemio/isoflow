@@ -1,48 +1,44 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import { Dices, Github, Settings } from "lucide-react";
 import { SettingsDrawer } from "./SettingsDrawer";
-import { scoreVoiceLeadingTransition } from "./voiceLeadingScore";
 import { resolveMidiCell as resolveMidiCellPure } from "./midiResolution";
 import { createMidiPassthrough, shouldForward } from "./midiOutput";
+import { evaluateVoiceLeading, shouldShowVoicingHint, isCellInPendingDestination } from "./voicingUtils";
 import {
   NOTES,
   MAJOR_KEYS,
-  DEGREE_FORMULAS,
   PROGRESSION_OPTIONS,
   STAGES,
-  MIDI_BASE_NOTE,
-  MIDI_OFFSET,
   PIANO_MIDI_START,
   PIANO_MIDI_END,
-  BLACK_PCS,
   PIANO_KEYS,
   PIANO_CELLS,
-  normalizeNote,
-  noteIndex,
-  transposeNote,
   getChordName,
   buildChordsForKey,
   buildGrid,
-  buildPianoKeys,
-  buildPianoCells,
   getPrevWhiteIndex,
-  uniqueNotesFromCells,
   parseProgression,
   generateRandomProgression,
   samePitchSet,
-  containsPitchSet,
   distance,
-  permutations,
   bestMapping,
   generateGuideCandidates,
 } from "./musicUtils";
 
-const SHOW_DEBUG = false;
-
 function App() {
-  const GRID = useMemo(() => buildGrid(8, 8, 6), []);
+  const GRID = useMemo(() => buildGrid(8, 8), []);
 
   const [viewMode, setViewMode] = useState("grid");
+
+  // MIDI range covered by the currently-active layout — used to bound the
+  // candidate-generation search so optimal-motion comparisons stay within
+  // notes the user can actually reach.
+  const layoutMidiRange = useMemo(() => {
+    if (viewMode === "piano") return { midiMin: PIANO_MIDI_START, midiMax: PIANO_MIDI_END };
+    const gridMin = GRID[GRID.length - 1][0].midi;
+    const gridMax = GRID[0][GRID[0].length - 1].midi;
+    return { midiMin: gridMin, midiMax: gridMax };
+  }, [GRID, viewMode]);
   const [mode, setMode] = useState("learn"); // "learn" | "play"
   const [keyCenter, setKeyCenter] = useState("C");
   const [customText, setCustomText] = useState("ii V I");
@@ -58,6 +54,7 @@ function App() {
   const [awaitingNextRound, setAwaitingNextRound] = useState(false);
   const [pendingDestination, setPendingDestination] = useState(null);
   const [transitionSummary, setTransitionSummary] = useState(null);
+  const [transitionGrade, setTransitionGrade] = useState(null); // "good" | "okay"
 
   const midiSupported = typeof navigator !== "undefined" && typeof navigator.requestMIDIAccess === "function";
   const [midiStatus, setMidiStatus] = useState(midiSupported ? "disconnected" : "unsupported");
@@ -70,8 +67,6 @@ function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const midiOutRef = useRef(null);
   if (midiOutRef.current === null) midiOutRef.current = createMidiPassthrough();
-  const [vlScore, setVlScore] = useState(null);
-  const vlTimerRef = useRef(null);
   const lastMidiCellRef = useRef(null);
   const midiAccessRef = useRef(null);
   const midiHandlerRef = useRef(null);
@@ -83,7 +78,6 @@ function App() {
   const [midiHeldCells, setMidiHeldCells] = useState([]);
   const advanceRef = useRef(null);
   const advanceStageRef = useRef(null);
-  const toChordRef = useRef(null);
 
   const [useOctaveMapping, setUseOctaveMapping] = useState(false);
   const midiPlayMode = Boolean(selectedMidiInputId);
@@ -122,6 +116,7 @@ function App() {
     setAwaitingNextRound(false);
     setPendingDestination(null);
     setTransitionSummary(null);
+    setTransitionGrade(null);
     midiNoteRegistryRef.current = {};
     registerAnchorRef.current = null;
   }
@@ -188,16 +183,16 @@ function App() {
     setActiveSelection((current) => current.filter((item) => item.id !== cell.id));
   }
 
-  function withMidi(cell) {
-    const midi =
-      midiNoteRegistryRef.current[cell.id] ??
-      cell.midi ??
-      (cell.pitchClass != null ? cell.pitchClass + MIDI_OFFSET : null);
-    return midi != null ? { ...cell, midi } : cell;
+  // Cells now always carry `.midi` from construction. This function only
+  // overrides the intrinsic MIDI when the user pressed a different MIDI key
+  // that was routed to this cell (proximity / octave-mapping mode).
+  function withRegisteredMidi(cell) {
+    const overridden = midiNoteRegistryRef.current[cell.id];
+    return overridden != null ? { ...cell, midi: overridden } : cell;
   }
 
   function pickCellForPitchClass(pitchClass) {
-    const candidates = GRID.flat().filter((c) => c.pitchClass % 12 === pitchClass);
+    const candidates = GRID.flat().filter((c) => c.pitchClass === pitchClass);
     if (candidates.length === 0) return null;
 
     const current = activeSelection();
@@ -223,7 +218,6 @@ function App() {
       pianoCells: PIANO_CELLS,
       grid: GRID,
       useOctaveMapping,
-      midiOffset: MIDI_OFFSET,
       anchor: registerAnchorRef.current ?? null,
     });
     // Side-effect: seed the anchor on first proximity-mode resolution.
@@ -398,7 +392,7 @@ function App() {
       const current = activeSelection();
       const ok = current.length === 4 && samePitchSet(current, fromChord.tones);
       setFeedback(ok
-        ? { type: "good", title: "Starting chord identified.", body: "Now identify its guide tones: the 3rd and 7th." }
+        ? { type: "good", title: "Great.", body: "Now identify its guide tones: the 3rd and 7th." }
         : { type: "bad", title: "Not the starting chord.", body: `Expected ${fromSymbol} in ${keyCenter}: ${fromChord.tones.join(" · ")}.` }
       );
       return ok;
@@ -407,16 +401,16 @@ function App() {
     if (stage.key === "IDENTIFY_GUIDES") {
       const current = activeSelection();
       const selectedInsideVoicing = current.every((cell) => {
-        const cellMidi = withMidi(cell).midi;
+        const cellMidi = withRegisteredMidi(cell).midi;
         return startVoicing.some((v) => {
           if (v.id === cell.id) return true;
-          const vMidi = withMidi(v).midi;
+          const vMidi = withRegisteredMidi(v).midi;
           return vMidi != null && vMidi === cellMidi;
         });
       });
       const ok = selectedInsideVoicing && current.length === 2 && samePitchSet(current, fromChord.guide);
       setFeedback(ok
-        ? { type: "good", title: "Nice.", body: `${fromSymbol} guide tones: ${fromChord.guide.join(" and ")}.` }
+        ? { type: "good", title: "Correct.", body: `${fromSymbol} guide tones: ${fromChord.guide.join(" and ")}.` }
         : {
           type: "bad",
           title: "Wrong guide tones.",
@@ -448,8 +442,8 @@ function App() {
         // Build note-name-aware pairs: match by same note first (common tones),
         // then pair the remaining voices. This avoids MIDI-estimation errors from
         // re-applied cells whose registry value may be stale.
-        const sg = startGuides.map(withMidi);
-        const mg = current.map(withMidi);
+        const sg = startGuides.map(withRegisteredMidi);
+        const mg = current.map(withRegisteredMidi);
         let mapping = null;
         if (sg.length === 2 && mg.length === 2) {
           const unmatched = [...mg];
@@ -525,7 +519,7 @@ function App() {
         const rating = mapping.total <= 1 ? "optimal" : mapping.total <= 3 ? "good" : "could be improved";
         setFeedback({
           type: rating === "optimal" ? "good" : "okay",
-          title: rating === "optimal" ? "Optimal movement." : rating === "good" ? "Good movement." : "Correct — could be tighter.",
+          title: rating === "optimal" ? "Perfect." : rating === "good" ? "Good movement." : "Correct — could be tighter.",
           body: `Guide tones resolved correctly.${stayText} Total: ${mapping.total} semitone${mapping.total !== 1 ? "s" : ""}.`,
         });
         return ok;
@@ -533,7 +527,7 @@ function App() {
 
       const mapping = startGuides.length === 2 && movedGuides.length === 2 ? bestMapping(startGuides, movedGuides) : null;
 
-      const guideCandidates = generateGuideCandidates(startGuides, toChord.guide, GRID);
+      const guideCandidates = generateGuideCandidates(startGuides, toChord.guide, layoutMidiRange);
 
       let optimal = null;
       for (const candidate of guideCandidates) {
@@ -549,12 +543,12 @@ function App() {
       setFeedback(ok
         ? {
           type: extra <= 0.25 ? "good" : "okay",
-          title: extra <= 0.25 ? "Guide tones moved optimally." : "Correct guide tones, slightly more movement.",
+          title: extra <= 0.25 ? "Nice." : "Correct — could be tighter.",
           body: `Movement ${mapping.total.toFixed(1)}. Best possible ${optimal.total.toFixed(1)}.${stayText}`
         }
         : {
           type: "bad",
-          title: correctNotes ? "Correct notes, but too much motion." : "Wrong destination guide tones.",
+          title: correctNotes ? "Correct — too much motion." : "Wrong destination guide tones.",
           body: correctNotes
             ? `Movement ${mapping?.total.toFixed(1)}. Best possible ${optimal?.total.toFixed(1)}. A guide tone can stay if it is already in the next guide-tone set.`
             : `For ${toSymbol} in ${keyCenter}, guide tones are: ${toChord.guide.join(" · ")}. One voice may stay if already correct.`
@@ -571,31 +565,15 @@ function App() {
         combined.length === 4 &&
         samePitchSet(combined, toChord.tones);
 
-      let widerVoicing = false;
-      if (pitchOk && midiPlayMode) {
-        if (mode === "play") {
-          // Play mode voice-leading: check whole chord move (4 voices)
-          const sMidi = startVoicing.map((c) => withMidi(c));
-          const tMidi = combined.map((c) => withMidi(c));
-          const mapping = bestMapping(sMidi, tMidi);
-          const ok = mapping !== null && mapping.maxJump <= 7;
-          if (!ok) {
-            setFeedback({ type: "bad", title: "Too much motion.", body: `Leap of ${mapping.maxJump} semitones is too large.` });
-            return false;
-          }
-        }
-        // Always check non-guide tone register regardless of mode
-        const guideMidis = movedGuides.map((c) => withMidi(c).midi).filter((m) => m != null);
-        const extraTones = selected.length > 0 ? selected : current;
-        if (guideMidis.length > 0) {
-          const registerOk = extraTones.every((c) => {
-            const m = withMidi(c).midi;
-            return m == null || guideMidis.some((gm) => Math.abs(m - gm) <= 12);
-          });
-          if (!registerOk) {
-            widerVoicing = true;
-          }
-        }
+      let score = null;
+      if (pitchOk) {
+        // 4-tier voice-leading score over all 4 voices (see voicingUtils.js).
+        // Wide leaps surface as Wide / amber in the score; chord correctness
+        // is the only hard-fail at FILL_CHORD.
+        score = evaluateVoiceLeading(
+          startVoicing.map(withRegisteredMidi),
+          combined.map(withRegisteredMidi)
+        );
       }
 
       const ok = pitchOk;
@@ -603,9 +581,11 @@ function App() {
         const completedDestination = combined;
         setPendingDestination(completedDestination);
         setAwaitingNextRound(true);
-        setTransitionSummary(widerVoicing
-          ? "Wider voicing than ideal."
-          : "Smooth.");
+        setTransitionSummary(score?.feedback ?? "Smooth.");
+        const grade = (score?.classification === "Optimal" || score?.classification === "Good")
+          ? "good"
+          : "okay";
+        setTransitionGrade(grade);
         setFeedback(null);
       } else {
         setFeedback({
@@ -666,23 +646,6 @@ function App() {
   function advance(checkOnly = false) {
     if (awaitingNextRound) {
       if (!checkOnly) {
-        if (SHOW_DEBUG && midiPlayMode && stage.key === "FILL_CHORD") {
-          const sMidi = startVoicing.map((c) => withMidi(c).midi).filter(m => m != null);
-          const tMidi = activeSelection().map((c) => withMidi(c).midi).filter(m => m != null);
-          if (sMidi.length === 4 && tMidi.length === 4) {
-            try {
-              const score = scoreVoiceLeadingTransition(
-                sMidi, tMidi,
-                toChord.tones.map(t => NOTES.indexOf(t)),
-                fromChord.tones.map(t => NOTES.indexOf(t)),
-                toChord.tones.map(t => NOTES.indexOf(t))
-              );
-              setVlScore(score);
-            } catch (e) {
-              console.warn('scoreVoiceLeadingTransition failed:', e);
-            }
-          }
-        }
         startNextRound();
       }
       return true;
@@ -700,7 +663,6 @@ function App() {
 
   advanceRef.current = advance;
   advanceStageRef.current = advanceStage;
-  toChordRef.current = toChord;
 
   function startNextRound() {
     const destination = pendingDestination || [...movedGuides, ...selected];
@@ -713,6 +675,7 @@ function App() {
     setFeedback(null);
     setPendingDestination(null);
     setTransitionSummary(null);
+    setTransitionGrade(null);
     setAwaitingNextRound(false);
 
     // Play mode seamless transition:
@@ -781,16 +744,13 @@ function App() {
 
 
 
-    const isSuccessfulDestinationTone =
-      awaitingNextRound &&
-      pendingDestination?.some((destinationCell) => destinationCell.id === cell.id);
+    const isSuccessfulDestinationTone = isCellInPendingDestination(cell, awaitingNextRound, pendingDestination);
 
     return [
       "cell",
       isMidiHeld ? "midi-held" : "",
       isSelected ? "selected" : "",
-      isStartVoicing && stage.key === "IDENTIFY_GUIDES" && !isSelected ? "voicing-hint" : "",
-      isStartGuide && stage.key === "MOVE_GUIDES" && !isSelected && !isMovedGuide ? "voicing-hint" : "",
+      shouldShowVoicingHint(cell, stage.key, startVoicing, startGuides, movedGuides, isSelected, isMovedGuide) ? "voicing-hint" : "",
       isMovedGuide ? "moved-guide" : "",
       isFinalLockedGuide ? "locked final-guide" : "",
       isSuccessfulDestinationTone ? "success-tone" : ""
@@ -807,25 +767,21 @@ function App() {
     if (!pianoCell) return key.isBlack ? "piano-key black" : "piano-key white";
 
     const curr = activeSelection();
-    const remainingDestinationTones = toChord.tones.filter((n) => !toChord.guide.includes(n));
     const isSelected = curr.some((c) => c.id === pianoCell.id);
     const pianoPressedIds = Object.values(midiPressedRef.current);
     const isMidiHeld = midiHeldCells.some((c) => c.id === pianoCell.id) ||
       pianoPressedIds.includes(pianoCell.id);
-    const isStartGuide = startGuides.some((c) => c.id === pianoCell.id);
     const isMovedGuide = movedGuides.some((c) => c.id === pianoCell.id);
-    const isSuccessTone = awaitingNextRound && pendingDestination?.some((c) =>
-      c.midi != null ? c.midi === key.midi : c.note === key.note
-    );
-
-
+    const isFinalLockedGuide = stage.key === "FILL_CHORD" && isMovedGuide;
+    const isSuccessTone = isCellInPendingDestination(pianoCell, awaitingNextRound, pendingDestination);
 
     return [
       key.isBlack ? "piano-key black" : "piano-key white",
       isSelected ? "selected" : "",
       isMidiHeld ? "midi-held" : "",
-      isStartGuide && stage.key !== "START_CHORD" ? "source-guide" : "",
+      shouldShowVoicingHint(pianoCell, stage.key, startVoicing, startGuides, movedGuides, isSelected, isMovedGuide) ? "voicing-hint" : "",
       isMovedGuide ? "moved-guide" : "",
+      isFinalLockedGuide ? "locked final-guide" : "",
       isSuccessTone ? "success-tone" : "",
     ].filter(Boolean).join(" ");
   }
@@ -882,52 +838,6 @@ function App() {
     return () => clearTimeout(timer);
   }, [awaitingNextRound]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Live voice-leading score during MOVE_GUIDES — updates on every note change.
-  // eslint-disable-next-line react-hooks/rules-of-hooks
-  useEffect(() => {
-    if (stage.key !== "MOVE_GUIDES" || startGuides.length !== 2 || movedGuides.length === 0) {
-      if (stage.key !== "MOVE_GUIDES") setVlScore(null);
-      return;
-    }
-    const enrichedFrom = startGuides.map(withMidi);
-    const enrichedTo = movedGuides.map(withMidi);
-    const mapping = enrichedFrom.length === enrichedTo.length
-      ? bestMapping(enrichedFrom, enrichedTo)
-      : null;
-    if (!mapping) return;
-
-    // Compute optimal using all valid destination candidates
-    const guideNotes = toChordRef.current?.guide ?? [];
-    const candidates = generateGuideCandidates(startGuides, guideNotes, GRID);
-    let optimal = null;
-    for (const candidate of candidates) {
-      const solved = bestMapping(enrichedFrom, candidate.map(withMidi));
-      if (!optimal || solved.score < optimal.score) optimal = solved;
-    }
-
-    const userDistance = mapping.total;
-    const optimalDistance = optimal?.total ?? null;
-    const excessDistance = optimalDistance != null ? userDistance - optimalDistance : null;
-
-    const guideResult = mapping.maxJump <= 2 ? "correct" : "incorrect — guide tone violation";
-    const rating = mapping.maxJump > 2 ? null :
-      mapping.total <= 1 ? "optimal" :
-        mapping.total <= 3 ? "good" : "could be improved";
-
-    setVlScore({
-      userDistance,
-      optimalDistance,
-      excessDistance,
-      result: guideResult,
-      rating,
-      message: guideResult === "correct"
-        ? (rating === "optimal" ? "Optimal — guide tones resolved by step or stayed." :
-          rating === "good" ? "Good — guide tones correct, slight extra motion." :
-            "Correct — consider tighter voice leading.")
-        : `✗ Guide tone leap of ${mapping.maxJump} semitone${mapping.maxJump !== 1 ? "s" : ""} — must stay or move by step.`,
-    });
-  }, [stage.key, movedGuides, startGuides]); // eslint-disable-line react-hooks/exhaustive-deps
-
   return (
     <main className="app-shell">
       <section className="panel">
@@ -960,12 +870,23 @@ function App() {
 
           <label className="ctrl-prog">
             Progression
-            <input
-              list="progression-presets"
-              value={customText}
-              onChange={(e) => { setCustomText(e.target.value); resetAll(); }}
-              placeholder="ii V I"
-            />
+            <div className="prog-group">
+              <input
+                list="progression-presets"
+                value={customText}
+                onChange={(e) => { setCustomText(e.target.value); resetAll(); }}
+                placeholder="ii V I"
+              />
+              <button
+                type="button"
+                className="prog-dice-btn"
+                onClick={() => { const p = generateRandomProgression(); setCustomText(p); resetAll(); }}
+                title="Random progression"
+                aria-label="Random progression"
+              >
+                <Dices size={18} />
+              </button>
+            </div>
             <datalist id="progression-presets">
               {Object.entries(PROGRESSION_OPTIONS).map(([name, chords]) => (
                 <option key={name} value={chords.join(" ")} />
@@ -973,30 +894,15 @@ function App() {
             </datalist>
           </label>
 
-          <label className="ctrl-random">
-            Random
-            <button
-              type="button"
-              className="random-button"
-              onClick={() => { const p = generateRandomProgression(); setCustomText(p); resetAll(); }}
-              title="Random"
-            >
-              <Dices size={15} />
-            </button>
-          </label>
-
-          <label className="ctrl-settings">
-            Settings
-            <button
-              type="button"
-              className="random-button"
-              onClick={() => setSettingsOpen(true)}
-              title="Settings"
-              aria-label="Open settings"
-            >
-              <Settings size={15} />
-            </button>
-          </label>
+          <button
+            type="button"
+            className="icon-button ctrl-settings"
+            onClick={() => setSettingsOpen(true)}
+            title="Settings"
+            aria-label="Open settings"
+          >
+            <Settings size={18} />
+          </button>
         </div>
 
         <div className="mode-row">
@@ -1017,7 +923,7 @@ function App() {
         </div>
 
 
-        <div className={`step-row mode-${mode}${feedback && !awaitingNextRound && (mode === "learn" || feedback.type === "good") ? ` step-${feedback.type}` : awaitingNextRound ? (transitionSummary?.includes("wider voicing") ? " step-okay" : " step-good") : ""}`}>
+        <div className={`step-row mode-${mode}${feedback && !awaitingNextRound && (mode === "learn" || feedback.type === "good") ? ` step-${feedback.type}` : awaitingNextRound ? ` step-${transitionGrade ?? "good"}` : ""}`}>
           <div className="flow-strip" style={{ visibility: mode === "learn" ? "visible" : "hidden" }}>
             {STAGES.map((item, index) => {
               const actualIndex = STAGES.indexOf(item);
@@ -1116,53 +1022,6 @@ function App() {
                 </button>
               ))}
             </div>
-          </div>
-        )}
-
-        {SHOW_DEBUG && (
-          <div className="debug-midi">
-            <div style={{ marginBottom: '6px', fontSize: '11px', fontWeight: '700', color: '#111' }}>
-              STAGE: {stage.key} {startVoicing.length > 0 &&
-                <span style={{ fontWeight: '400', opacity: 0.6, marginLeft: '8px' }}>
-                  (Ref: {startVoicing.map(c => `${c.note}${withMidi(c).midi != null ? Math.floor(withMidi(c).midi / 12) - 1 : ''}`).join(" ")})
-                </span>
-              }
-            </div>
-            {midiHeldCells.length > 0
-              ? [...midiHeldCells]
-                .map((c) => withMidi(c))
-                .sort((a, b) => (a.midi || 0) - (b.midi || 0))
-                .map((c) => {
-                  const octave = c.midi != null ? Math.floor(c.midi / 12) - 1 : "";
-                  const midiNum = c.midi != null ? ` (${c.midi})` : "";
-                  return `${c.note}${octave}${midiNum}`;
-                })
-                .join(" · ")
-              : "—"}
-
-            {mode === "play" && startVoicing.length === 4 && midiHeldCells.length === 4 && (
-              <div style={{ marginTop: '5px', fontSize: '10px', color: '#7c7c82' }}>
-                {(() => {
-                  const sMidi = startVoicing.map((c) => withMidi(c));
-                  const tMidi = midiHeldCells.map((c) => withMidi(c));
-                  const m = bestMapping(sMidi, tMidi);
-                  return m ? `Motion: Max=${m.maxJump}, Total=${m.total}` : "No Mapping Found";
-                })()}
-              </div>
-            )}
-            {vlScore && (
-              <div style={{ marginTop: '8px', paddingTop: '8px', borderTop: '1px solid #eee', fontSize: '10px' }}>
-                <div style={{ fontWeight: '700', color: '#111', marginBottom: '4px' }}>VOICE LEADING</div>
-                <div style={{ color: vlScore.result === 'correct' ? '#14532d' : '#7f1d1d', fontWeight: '700', marginBottom: '2px' }}>
-                  {vlScore.result}
-                </div>
-                {vlScore.rating && (
-                  <div style={{ color: '#555', marginBottom: '4px' }}>Rating: {vlScore.rating}</div>
-                )}
-                <div>User: {vlScore.userDistance} · Optimal: {vlScore.optimalDistance ?? '—'} · Excess: {vlScore.excessDistance ?? '—'}</div>
-                <div style={{ marginTop: '4px', fontStyle: 'italic', color: '#444' }}>{vlScore.message}</div>
-              </div>
-            )}
           </div>
         )}
 

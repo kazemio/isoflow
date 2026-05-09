@@ -475,8 +475,52 @@ button:disabled {
 
 
 .controls.key-controls {
-  grid-template-columns: 150px 1fr 90px 90px;
+  grid-template-columns: 150px 1fr 42px;
+  align-items: end;
+  gap: 12px;
   margin-top: 46px;
+}
+
+/* Progression input with dice action attached at the right edge.
+   Visually one control: shared border, dice sits flush inside. */
+.prog-group {
+  display: flex;
+  align-items: stretch;
+  margin-top: 7px;
+  height: 42px;
+  border-radius: 14px;
+  border: 1px solid rgba(0, 0, 0, 0.09);
+  background: rgba(247, 247, 248, 0.9);
+  overflow: hidden;
+}
+
+.prog-group input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  margin-top: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+
+.prog-dice-btn {
+  width: 42px;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-left: 1px solid rgba(0, 0, 0, 0.06);
+  color: #74747c;
+  cursor: pointer;
+  transition: background 120ms ease, color 120ms ease;
+}
+
+.prog-dice-btn:hover {
+  background: rgba(0, 0, 0, 0.04);
+  color: #1b1b1f;
 }
 
 .mode-row {
@@ -500,23 +544,27 @@ button:disabled {
 
 
 
-.ctrl-random {}
-
-.random-button {
-  width: 100%;
+/* Minimal icon-only buttons — used for Random and Settings.
+   Sized to match the input/select height (42px) and bottom-aligned with
+   labelled controls via `.controls.key-controls { align-items: end }`. */
+.icon-button {
+  width: 42px;
   height: 42px;
-  margin-top: 7px;
-  border-radius: 14px;
-  display: grid;
-  place-items: center;
-  background: rgba(247, 247, 248, 0.9);
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
   border: 1px solid rgba(0, 0, 0, 0.09);
+  border-radius: 12px;
+  color: #74747c;
   cursor: pointer;
-  color: #56565d;
+  transition: background 120ms ease, color 120ms ease;
 }
 
-.random-button:hover {
-  background: #e8e8ea;
+.icon-button:hover {
+  background: rgba(0, 0, 0, 0.04);
+  color: #1b1b1f;
 }
 
 .current-card {
@@ -533,13 +581,9 @@ button:disabled {
   }
 
   .controls.key-controls {
-    grid-template-columns: 1fr 1.2fr 56px 56px;
-    grid-template-areas: "key prog rand sett";
+    grid-template-columns: 1fr 1.4fr 42px;
+    grid-template-areas: "key prog sett";
     gap: 10px;
-  }
-
-  .ctrl-random {
-    grid-area: rand;
   }
 
   .ctrl-settings {
@@ -552,10 +596,6 @@ button:disabled {
 
   .ctrl-prog {
     grid-area: prog;
-  }
-
-  .random-button {
-    width: 100%;
   }
 
   .cell {
@@ -709,14 +749,6 @@ button:disabled {
   margin-bottom: 14px;
 }
 
-.debug-midi {
-  font-size: 11px;
-  font-weight: 700;
-  color: #8b8b93;
-  letter-spacing: 0.06em;
-  text-align: center;
-  margin-top: 10px;
-}
 
 .piano-range-label {
   text-align: center;
@@ -780,23 +812,35 @@ button:disabled {
   background: #c06a10;
 }
 
-.piano-key.white.source-guide,
-.piano-key.black.source-guide {
-  box-shadow: none;
+.piano-key.white.voicing-hint:not(.selected):not(.midi-held):not(.moved-guide):not(.success-tone) {
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.08),
+    inset 0 0 0 2px rgba(242, 140, 40, 0.75);
 }
 
-.piano-key.white.moved-guide {
+.piano-key.black.voicing-hint:not(.selected):not(.midi-held):not(.moved-guide):not(.success-tone) {
+  box-shadow: inset 0 0 0 2px rgba(242, 140, 40, 0.85);
+}
+
+.piano-key.white.moved-guide,
+.piano-key.white.final-guide {
   background: #f28c28;
   color: white;
 }
 
-.piano-key.black.moved-guide {
+.piano-key.black.moved-guide,
+.piano-key.black.final-guide {
   background: #c06a10;
 }
 
-.piano-key.success-tone {
+.piano-key.success-tone,
+.piano-key.success-tone.selected,
+.piano-key.success-tone.midi-held,
+.piano-key.success-tone.moved-guide,
+.piano-key.success-tone.final-guide {
+  background: #2d7a43 !important;
+  color: white !important;
   animation: success-flash 0.5s ease forwards;
-  color: white;
 }
 
 /* ── Settings drawer ── */
