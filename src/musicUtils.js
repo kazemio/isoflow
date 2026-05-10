@@ -191,6 +191,18 @@ export function containsPitchSet(cells, targetNotes) {
   return targetNotes.every((note) => selected.includes(note));
 }
 
+// Set-equality for two arrays of note-name strings (e.g. chord.guide vs
+// chord.guide). For cells, use samePitchSet — that one normalizes enharmonics
+// via .pitchClass. This helper assumes inputs are already canonical spellings
+// (which is the case for everything that comes out of buildChordsForKey).
+export function sameNoteSet(a, b) {
+  if (a.length !== b.length) return false;
+  const sa = [...a].sort();
+  const sb = [...b].sort();
+  for (let i = 0; i < sa.length; i++) if (sa[i] !== sb[i]) return false;
+  return true;
+}
+
 // Voice-leading motion distance — always semitones. Both inputs MUST carry
 // `.midi` (every cell does, post-canonical refactor); failure to do so is a
 // programming error, not a fallback condition.
