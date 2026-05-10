@@ -3,7 +3,8 @@ import { Dices, Github, Settings } from "lucide-react";
 import { SettingsDrawer } from "./SettingsDrawer";
 import { resolveMidiCell as resolveMidiCellPure } from "./midiResolution";
 import { createMidiPassthrough, shouldForward } from "./midiOutput";
-import { evaluateVoiceLeading, shouldShowVoicingHint, isCellInPendingDestination } from "./voicingUtils";
+import { shouldShowVoicingHint, isCellInPendingDestination } from "./voicingUtils";
+import { checkStage as runCheckStage } from "./stageMachine";
 import {
   NOTES,
   MAJOR_KEYS,
@@ -20,10 +21,18 @@ import {
   parseProgression,
   generateRandomProgression,
   samePitchSet,
+  sameNoteSet,
   distance,
-  bestMapping,
-  generateGuideCandidates,
 } from "./musicUtils";
+
+// MIDI play mode: how long the user must hold the correct notes before the
+// stage check fires. Acts as a debounce against transient mid-chord states.
+const MIDI_HOLD_MS = 750;
+
+// How long a feedback / transition state stays on screen before the UI
+// advances to the next stage or round. Gives the user a beat to read the
+// result before the layout changes.
+const FEEDBACK_HOLD_MS = 750;
 
 function App() {
   const GRID = useMemo(() => buildGrid(8, 8), []);
@@ -388,218 +397,31 @@ function App() {
 
 
   function checkStage() {
-    if (stage.key === "START_CHORD") {
-      const current = activeSelection();
-      const ok = current.length === 4 && samePitchSet(current, fromChord.tones);
-      setFeedback(ok
-        ? { type: "good", title: "Great.", body: "Now identify its guide tones: the 3rd and 7th." }
-        : { type: "bad", title: "Not the starting chord.", body: `Expected ${fromSymbol} in ${keyCenter}: ${fromChord.tones.join(" · ")}.` }
-      );
-      return ok;
+    const result = runCheckStage({
+      stageKey: stage.key,
+      fromChord, toChord,
+      fromSymbol, toSymbol,
+      keyCenter,
+      mode,
+      midiPlayMode,
+      selection: activeSelection().map(withRegisteredMidi),
+      startVoicing: startVoicing.map(withRegisteredMidi),
+      startGuides: startGuides.map(withRegisteredMidi),
+      movedGuides: movedGuides.map(withRegisteredMidi),
+      selected: selected.map(withRegisteredMidi),
+      layoutMidiRange,
+    });
+
+    setFeedback(result.feedback);
+
+    if (result.pendingDestination) {
+      setPendingDestination(result.pendingDestination);
+      setAwaitingNextRound(true);
+      setTransitionSummary(result.transitionSummary);
+      setTransitionGrade(result.transitionGrade);
     }
 
-    if (stage.key === "IDENTIFY_GUIDES") {
-      const current = activeSelection();
-      const selectedInsideVoicing = current.every((cell) => {
-        const cellMidi = withRegisteredMidi(cell).midi;
-        return startVoicing.some((v) => {
-          if (v.id === cell.id) return true;
-          const vMidi = withRegisteredMidi(v).midi;
-          return vMidi != null && vMidi === cellMidi;
-        });
-      });
-      const ok = selectedInsideVoicing && current.length === 2 && samePitchSet(current, fromChord.guide);
-      setFeedback(ok
-        ? { type: "good", title: "Correct.", body: `${fromSymbol} guide tones: ${fromChord.guide.join(" and ")}.` }
-        : {
-          type: "bad",
-          title: "Wrong guide tones.",
-          body: selectedInsideVoicing
-            ? `The guide tones are the 3rd and 7th: ${fromChord.guide.join(" · ")}.`
-            : "Guide tones must come from the starting voicing you just built."
-
-        }
-      );
-      return ok;
-    }
-
-    if (stage.key === "MOVE_GUIDES") {
-      const current = activeSelection();
-
-      // If we are still holding the correct guides for the STARTING chord, stay silent.
-      // We wait for the user to move towards the destination guides.
-      if (samePitchSet(current, fromChord.guide)) {
-        return false;
-      }
-      const correctNotes = samePitchSet(current, toChord.guide);
-
-      if (midiPlayMode) {
-        if (!correctNotes) {
-          setFeedback({ type: "bad", title: "Wrong destination guide tones.", body: `For ${toSymbol} in ${keyCenter}, guide tones are: ${toChord.guide.join(" · ")}.` });
-          return false;
-        }
-
-        // Build note-name-aware pairs: match by same note first (common tones),
-        // then pair the remaining voices. This avoids MIDI-estimation errors from
-        // re-applied cells whose registry value may be stale.
-        const sg = startGuides.map(withRegisteredMidi);
-        const mg = current.map(withRegisteredMidi);
-        let mapping = null;
-        if (sg.length === 2 && mg.length === 2) {
-          const unmatched = [...mg];
-          const pairs = [];
-          // First pass: same note name (common tone or correct resolution by name)
-          for (const from of sg) {
-            const idx = unmatched.findIndex((t) => t.note === from.note);
-            if (idx >= 0) { pairs.push({ from, to: unmatched.splice(idx, 1)[0] }); }
-          }
-          // Second pass: remaining voices by MIDI proximity
-          const leftFrom = sg.filter((f) => !pairs.find((p) => p.from.id === f.id));
-          for (const from of leftFrom) {
-            const fMidi = from.midi ?? 0;
-            unmatched.sort((a, b) => Math.abs((a.midi ?? 0) - fMidi) - Math.abs((b.midi ?? 0) - fMidi));
-            if (unmatched.length) pairs.push({ from, to: unmatched.shift() });
-          }
-          if (pairs.length === 2) {
-            const dists = pairs.map((p) => {
-              const a = p.from.midi, b = p.to.midi;
-              return a != null && b != null ? Math.abs(a - b) : distance(p.from, p.to);
-            });
-            mapping = {
-              pairs: pairs.map((p, i) => ({ ...p, distance: dists[i] })),
-              total: dists.reduce((s, d) => s + d, 0),
-              maxJump: Math.max(...dists),
-            };
-          }
-        }
-
-        // Strict: each guide tone must stay (0) or move by step (≤ 2 semitones).
-        const ok = mapping !== null && mapping.maxJump <= 2;
-        const stayed = mapping?.pairs.filter((p) => p.from.midi === p.to.midi).length ?? 0;
-        const stayText = stayed > 0 ? ` ${stayed} stayed put.` : "";
-
-        if (!ok) {
-          const badPair = mapping?.pairs.find((p) => Math.abs((p.from.midi ?? 0) - (p.to.midi ?? 0)) > 2);
-          if (badPair) {
-            const octave = (m) => m != null ? Math.floor(m / 12) - 1 : "";
-            const fromLabel = `${badPair.from.note}${octave(badPair.from.midi)}`;
-            const toLabel = `${badPair.to.note}${octave(badPair.to.midi)}`;
-            const interval = Math.abs((badPair.from.midi ?? 0) - (badPair.to.midi ?? 0));
-            const direction = (badPair.to.midi ?? 0) > (badPair.from.midi ?? 0) ? "up" : "down";
-            // Find the correct target: nearest destination guide tone to the source note
-            const fromMidi = badPair.from.midi ?? 60;
-            const sourceOctave = Math.floor(fromMidi / 12) - 1;
-            const correctTarget = toChord.guide
-              .flatMap((n) => [-12, 0, 12].map((offset) => {
-                const pc = ((NOTES.indexOf(n) - fromMidi % 12 + 12) % 12);
-                return { note: n, midi: fromMidi + pc + offset };
-              }))
-              .filter((t) => t.midi > 0 && t.midi < 128)
-              .sort((a, b) => {
-                const dA = Math.abs(a.midi - fromMidi);
-                const dB = Math.abs(b.midi - fromMidi);
-                if (dA !== dB) return dA - dB;
-                // Tie-break: prefer same octave as source note
-                const sameA = (Math.floor(a.midi / 12) - 1) === sourceOctave ? 0 : 1;
-                const sameB = (Math.floor(b.midi / 12) - 1) === sourceOctave ? 0 : 1;
-                return sameA - sameB;
-              })[0];
-            const correctLabel = correctTarget
-              ? `${correctTarget.note}${octave(correctTarget.midi)}`
-              : toChord.guide.join(" or ");
-            const isCommonTone = correctTarget && correctTarget.midi === fromMidi;
-            const suggestion = isCommonTone ? `stay on ${fromLabel}` : `try ${correctLabel}`;
-            setFeedback({ type: "bad", title: `${fromLabel} jumped ${interval} semitone${interval !== 1 ? "s" : ""} ${direction} to ${toLabel} — ${suggestion}.` });
-          } else {
-            setFeedback({ type: "bad", title: "Guide tone moved too far.", body: "Each guide tone must stay or move by step (half or whole)." });
-          }
-          return false;
-        }
-
-        const rating = mapping.total <= 1 ? "optimal" : mapping.total <= 3 ? "good" : "could be improved";
-        setFeedback({
-          type: rating === "optimal" ? "good" : "okay",
-          title: rating === "optimal" ? "Perfect." : rating === "good" ? "Good movement." : "Correct — could be tighter.",
-          body: `Guide tones resolved correctly.${stayText} Total: ${mapping.total} semitone${mapping.total !== 1 ? "s" : ""}.`,
-        });
-        return ok;
-      }
-
-      const mapping = startGuides.length === 2 && movedGuides.length === 2 ? bestMapping(startGuides, movedGuides) : null;
-
-      const guideCandidates = generateGuideCandidates(startGuides, toChord.guide, layoutMidiRange);
-
-      let optimal = null;
-      for (const candidate of guideCandidates) {
-        const solved = bestMapping(startGuides, candidate);
-        if (!optimal || solved.score < optimal.score) optimal = solved;
-      }
-
-      const extra = mapping && optimal ? mapping.total - optimal.total : null;
-      const ok = correctNotes && extra !== null && extra <= 2.5;
-      const stayed = mapping?.pairs.filter((pair) => pair.from.id === pair.to.id).length ?? 0;
-      const stayText = stayed > 0 ? ` ${stayed} voice${stayed === 1 ? "" : "s"} stayed put.` : "";
-
-      setFeedback(ok
-        ? {
-          type: extra <= 0.25 ? "good" : "okay",
-          title: extra <= 0.25 ? "Nice." : "Correct — could be tighter.",
-          body: `Movement ${mapping.total.toFixed(1)}. Best possible ${optimal.total.toFixed(1)}.${stayText}`
-        }
-        : {
-          type: "bad",
-          title: correctNotes ? "Correct — too much motion." : "Wrong destination guide tones.",
-          body: correctNotes
-            ? `Movement ${mapping?.total.toFixed(1)}. Best possible ${optimal?.total.toFixed(1)}. A guide tone can stay if it is already in the next guide-tone set.`
-            : `For ${toSymbol} in ${keyCenter}, guide tones are: ${toChord.guide.join(" · ")}. One voice may stay if already correct.`
-        }
-      );
-
-      return ok;
-    }
-
-    if (stage.key === "FILL_CHORD") {
-      const current = activeSelection();
-      const combined = mode === "play" ? current : [...movedGuides, ...selected];
-      const pitchOk =
-        combined.length === 4 &&
-        samePitchSet(combined, toChord.tones);
-
-      let score = null;
-      if (pitchOk) {
-        // 4-tier voice-leading score over all 4 voices (see voicingUtils.js).
-        // Wide leaps surface as Wide / amber in the score; chord correctness
-        // is the only hard-fail at FILL_CHORD.
-        score = evaluateVoiceLeading(
-          startVoicing.map(withRegisteredMidi),
-          combined.map(withRegisteredMidi)
-        );
-      }
-
-      const ok = pitchOk;
-      if (ok) {
-        const completedDestination = combined;
-        setPendingDestination(completedDestination);
-        setAwaitingNextRound(true);
-        setTransitionSummary(score?.feedback ?? "Smooth.");
-        const grade = (score?.classification === "Optimal" || score?.classification === "Good")
-          ? "good"
-          : "okay";
-        setTransitionGrade(grade);
-        setFeedback(null);
-      } else {
-        setFeedback({
-          type: "bad",
-          title: "Chord not complete.",
-          body: mode === "play"
-            ? `Expected ${toSymbol} in ${keyCenter}: ${toChord.tones.join(" · ")}.`
-            : `Expected ${toSymbol} in ${keyCenter}: ${toChord.tones.join(" · ")}. The orange guide tones are already included; add the other two tones.`
-        });
-      }
-      return ok;
-    }
-
-    return false;
+    return result.ok;
   }
 
   function advanceStage() {
@@ -790,10 +612,16 @@ function App() {
   const displaySelection = stage.key === "FILL_CHORD" ? [...movedGuides, ...selected] : currentSelection;
   const selectionText = displaySelection.map((c) => c.note).join(" ") || "—";
   const isMovingStage = stage.key === "MOVE_GUIDES";
-  const hasInputMoved = isMovingStage ? !samePitchSet(currentSelection, fromChord.guide) : true;
+  // "Has input moved" is the gate that prevents auto-advance while the user
+  // is still holding the source guides mid-resolution. When the source and
+  // destination guide sets are identical (e.g. I → I), the correct answer IS
+  // the source guides, so this gate must not block.
+  const guideSetsIdentical = isMovingStage && sameNoteSet(fromChord.guide, toChord.guide);
+  const hasInputMoved = !isMovingStage || guideSetsIdentical || !samePitchSet(currentSelection, fromChord.guide);
   const canAdvance = awaitingNextRound || (currentSelection.length === maxSelectionsForStage() && hasInputMoved);
 
-  // MIDI mode: hold correct notes for 0.5s to register, then flash for 0.5s before advancing.
+  // MIDI mode: hold the correct notes for MIDI_HOLD_MS to trigger the check,
+  // then leave the success state visible for FEEDBACK_HOLD_MS before advancing.
   // eslint-disable-next-line react-hooks/rules-of-hooks
   useEffect(() => {
     if (!midiPlayMode || !canAdvance) return;
@@ -803,9 +631,9 @@ function App() {
       if (ok) {
         setTimeout(() => {
           advanceRef.current?.(false);
-        }, 750);
+        }, FEEDBACK_HOLD_MS);
       }
-    }, 750);
+    }, MIDI_HOLD_MS);
     return () => clearTimeout(timer);
   }, [midiPlayMode, canAdvance, stageIndex, awaitingNextRound]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -826,7 +654,7 @@ function App() {
   useEffect(() => {
     if (midiPlayMode || awaitingNextRound || !canAdvance) return;
     const ok = checkStage();
-    const timer = setTimeout(() => { if (ok) advanceStage(); else clearCurrentStage(); }, 750);
+    const timer = setTimeout(() => { if (ok) advanceStage(); else clearCurrentStage(); }, FEEDBACK_HOLD_MS);
     return () => clearTimeout(timer);
   }, [canAdvance, midiPlayMode, awaitingNextRound]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -834,7 +662,7 @@ function App() {
   // eslint-disable-next-line react-hooks/rules-of-hooks
   useEffect(() => {
     if (!awaitingNextRound) return;
-    const timer = setTimeout(() => startNextRound(), 750);
+    const timer = setTimeout(() => startNextRound(), FEEDBACK_HOLD_MS);
     return () => clearTimeout(timer);
   }, [awaitingNextRound]); // eslint-disable-line react-hooks/exhaustive-deps
 
