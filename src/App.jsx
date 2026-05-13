@@ -3,7 +3,13 @@ import { Dices, Github, Settings } from "lucide-react";
 import { SettingsDrawer } from "./SettingsDrawer";
 import { resolveMidiCell as resolveMidiCellPure } from "./midiResolution";
 import { createMidiPassthrough, shouldForward, isForwardableMessage } from "./midiOutput";
-import { isSameMidiDevice, findAlternativeOutput, nextChannel } from "./midiRouting";
+import {
+  isSameMidiDevice,
+  findAlternativeOutput,
+  nextChannel,
+  passesInputChannelFilter,
+  captureLearnFromMessage,
+} from "./midiRouting";
 import { shouldShowVoicingHint, isCellInPendingDestination } from "./voicingUtils";
 import { checkStage as runCheckStage } from "./stageMachine";
 import {
@@ -464,21 +470,19 @@ function App() {
 
       // MIDI Input Learn: capture both device and channel from the first
       // channel-voice message we see (could be from any connected input).
-      if (inputLearningRef.current && isChannelVoice) {
-        const learnedCh = (statusByte & 0x0f) + 1;
-        const learnedDeviceId = input?.id ?? null;
-        console.log("MIDI INPUT LEARN → captured", input?.name ?? "(unknown)", "ch", learnedCh);
-        if (learnedDeviceId) setSelectedMidiInputId(learnedDeviceId);
-        setMidiInChannel(learnedCh);
-        stopInputLearn(true);
-        return;
+      if (inputLearningRef.current) {
+        const captured = captureLearnFromMessage(statusByte, input?.id);
+        if (captured) {
+          console.log("MIDI INPUT LEARN → captured", input?.name ?? "(unknown)", "ch", captured.channel);
+          if (captured.deviceId) setSelectedMidiInputId(captured.deviceId);
+          setMidiInChannel(captured.channel);
+          stopInputLearn(true);
+          return;
+        }
       }
 
       // Channel filter (channel-voice messages only). System messages bypass.
-      if (isChannelVoice) {
-        const inChannel = (statusByte & 0x0f) + 1;
-        if (inChannel !== midiInChannel) return;
-      }
+      if (!passesInputChannelFilter(statusByte, midiInChannel)) return;
 
       // Forwarding has two layers: (1) a per-message-type whitelist so we
       // don't pass synth-state dumps and other non-performance chatter to the

@@ -3,6 +3,8 @@ import {
   isSameMidiDevice,
   findAlternativeOutput,
   nextChannel,
+  passesInputChannelFilter,
+  captureLearnFromMessage,
 } from "../midiRouting";
 
 // Helper: shape mimics what `refreshDevices` puts on the state arrays.
@@ -150,5 +152,75 @@ describe("scenario: Input Learn captures a device that conflicts with output", (
     // Caller then uses nextChannel to bump.
     expect(nextChannel(2)).toBe(3);
     expect(nextChannel(16)).toBe(1);
+  });
+});
+
+// ── passesInputChannelFilter ────────────────────────────────────────────────
+
+describe("passesInputChannelFilter", () => {
+  it("passes a channel-voice message when its source channel matches the filter", () => {
+    // 0x95 = Note On ch 6  (status nibble 0x90 | (6-1) = 0x95)
+    expect(passesInputChannelFilter(0x95, 6)).toBe(true);
+    // 0x80 = Note Off ch 1
+    expect(passesInputChannelFilter(0x80, 1)).toBe(true);
+    // 0x9f = Note On ch 16
+    expect(passesInputChannelFilter(0x9f, 16)).toBe(true);
+  });
+
+  it("blocks a channel-voice message whose source channel differs from the filter", () => {
+    expect(passesInputChannelFilter(0x90, 2)).toBe(false); // ch 1 message, filter on ch 2
+    expect(passesInputChannelFilter(0x95, 1)).toBe(false); // ch 6 message, filter on ch 1
+    expect(passesInputChannelFilter(0x9f, 15)).toBe(false); // ch 16 message, filter on ch 15
+  });
+
+  it("passes system messages regardless of filter channel (they have no channel)", () => {
+    expect(passesInputChannelFilter(0xf0, 1)).toBe(true);  // sysex start
+    expect(passesInputChannelFilter(0xf8, 5)).toBe(true);  // timing clock
+    expect(passesInputChannelFilter(0xfa, 10)).toBe(true); // start
+    expect(passesInputChannelFilter(0xfe, 16)).toBe(true); // active sensing
+  });
+
+  it("works across all message types (note on/off, CC, pitch bend) — filters purely on channel", () => {
+    // Same channel (ch 3 = low nibble 2 → status type | 0x02), filter ch 3
+    expect(passesInputChannelFilter(0x82, 3)).toBe(true);  // note off ch 3
+    expect(passesInputChannelFilter(0x92, 3)).toBe(true);  // note on ch 3
+    expect(passesInputChannelFilter(0xb2, 3)).toBe(true);  // CC ch 3
+    expect(passesInputChannelFilter(0xe2, 3)).toBe(true);  // pitch bend ch 3
+  });
+});
+
+// ── captureLearnFromMessage ─────────────────────────────────────────────────
+
+describe("captureLearnFromMessage", () => {
+  it("captures channel + deviceId from a note-on", () => {
+    // 0x91 = Note On ch 2
+    expect(captureLearnFromMessage(0x91, "deluge-port-1")).toEqual({
+      channel: 2,
+      deviceId: "deluge-port-1",
+    });
+  });
+
+  it("captures from any channel-voice message type (CC, pitch bend, etc.)", () => {
+    expect(captureLearnFromMessage(0xb4, "ctrl")).toEqual({ channel: 5, deviceId: "ctrl" });
+    expect(captureLearnFromMessage(0xe0, "ctrl")).toEqual({ channel: 1, deviceId: "ctrl" });
+    expect(captureLearnFromMessage(0x8f, "ctrl")).toEqual({ channel: 16, deviceId: "ctrl" });
+  });
+
+  it("returns null for system messages (no channel to capture)", () => {
+    expect(captureLearnFromMessage(0xf0, "ctrl")).toBeNull(); // sysex
+    expect(captureLearnFromMessage(0xf8, "ctrl")).toBeNull(); // clock
+    expect(captureLearnFromMessage(0xfe, "ctrl")).toBeNull(); // active sensing
+  });
+
+  it("handles a missing deviceId by returning deviceId: null", () => {
+    expect(captureLearnFromMessage(0x90, null)).toEqual({ channel: 1, deviceId: null });
+    expect(captureLearnFromMessage(0x90, undefined)).toEqual({ channel: 1, deviceId: null });
+  });
+
+  it("real-world: capture from a fresh-pressed C4 note-on on channel 2 of Deluge Port 1", () => {
+    // statusByte: 0x90 | (2-1) = 0x91 = 145
+    // The MIDI IN line for this was: Deluge Port 1 ch 2 [145, 60, 100]
+    const result = captureLearnFromMessage(145, "deluge-port-1-input");
+    expect(result).toEqual({ channel: 2, deviceId: "deluge-port-1-input" });
   });
 });

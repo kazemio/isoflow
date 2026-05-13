@@ -1,3 +1,5 @@
+import { isChannelVoiceStatus } from "./midiOutput";
+
 // Pure helpers for MIDI device & channel routing decisions in IsoFlow.
 //
 // Web MIDI exposes the input and output halves of the same physical device
@@ -36,4 +38,27 @@ export function findAlternativeOutput(outputs, inputDevice) {
 export function nextChannel(channel) {
   if (!Number.isInteger(channel) || channel < 1 || channel > 16) return 1;
   return channel === 16 ? 1 : channel + 1;
+}
+
+// Returns true if a MIDI message should pass the user's input channel
+// filter. System messages (status >= 0xF0) have no channel and always pass.
+// Channel-voice messages pass only when their source channel matches
+// `filterChannel` (1..16).
+export function passesInputChannelFilter(statusByte, filterChannel) {
+  if (!isChannelVoiceStatus(statusByte)) return true;
+  const messageChannel = (statusByte & 0x0f) + 1;
+  return messageChannel === filterChannel;
+}
+
+// When Input Learn is armed, the first incoming channel-voice message
+// determines both the device and the channel IsoFlow should listen on.
+// Given a status byte and the id of the input port the message came from,
+// returns `{ channel, deviceId }` to apply, or null if the message is a
+// system message (no channel — can't be used for learn).
+export function captureLearnFromMessage(statusByte, deviceId) {
+  if (!isChannelVoiceStatus(statusByte)) return null;
+  return {
+    channel: (statusByte & 0x0f) + 1,
+    deviceId: deviceId ?? null,
+  };
 }
