@@ -16,6 +16,27 @@ export function isChannelVoiceStatus(statusByte) {
   return statusByte >= NOTE_OFF && statusByte < SYSTEM_MIN;
 }
 
+// Whitelist of MIDI messages worth forwarding to the destination synth in
+// IsoFlow's voice-leading practice flow. Drops the parameter-dump chatter
+// that workstations like the Deluge emit on clip selection (CCs #3, #5, …)
+// while preserving everything needed for expressive playing.
+//
+// Allowed:
+//   • Note On / Note Off          — the actual notes
+//   • Pitch Bend (0xE0)           — pitch wheel
+//   • Channel Pressure (0xD0)     — aftertouch
+//   • CC #64 (sustain pedal)      — the one CC that matters for held notes
+//   • System messages (status ≥ 0xF0)  — clock, transport, sysex pass through
+export function isForwardableMessage(statusByte, data1) {
+  const op = statusByte & 0xf0;
+  if (op === NOTE_OFF || op === NOTE_ON) return true;
+  if (op === 0xe0) return true;                // pitch bend
+  if (op === 0xd0) return true;                // channel pressure
+  if (op === 0xb0 && data1 === 64) return true; // sustain pedal
+  if (statusByte >= SYSTEM_MIN) return true;   // system messages — no channel, pass through
+  return false;
+}
+
 // Returns the original byte unchanged for system messages or invalid channels.
 export function rewriteChannel(statusByte, channel) {
   if (!isChannelVoiceStatus(statusByte)) return statusByte;

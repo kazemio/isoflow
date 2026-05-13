@@ -1,8 +1,9 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Dices, Github, Settings } from "lucide-react";
 import { SettingsDrawer } from "./SettingsDrawer";
 import { resolveMidiCell as resolveMidiCellPure } from "./midiResolution";
-import { createMidiPassthrough, shouldForward } from "./midiOutput";
+import { createMidiPassthrough, shouldForward, isForwardableMessage } from "./midiOutput";
+import { isSameMidiDevice, findAlternativeOutput, nextChannel } from "./midiRouting";
 import { shouldShowVoicingHint, isCellInPendingDestination } from "./voicingUtils";
 import { checkStage as runCheckStage } from "./stageMachine";
 import {
@@ -69,11 +70,18 @@ function App() {
   const [midiStatus, setMidiStatus] = useState(midiSupported ? "disconnected" : "unsupported");
   const [midiInputs, setMidiInputs] = useState([]);
   const [selectedMidiInputId, setSelectedMidiInputId] = useState("");
-  const [midiInChannel, setMidiInChannel] = useState(0); // 0 = All (omni), 1-16 specific
+  const [midiInChannel, setMidiInChannel] = useState(1); // 1-16
   const [midiOutputs, setMidiOutputs] = useState([]);
   const [selectedMidiOutputId, setSelectedMidiOutputId] = useState("");
   const [midiOutChannel, setMidiOutChannel] = useState(1); // 1-16
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [inputLearning, setInputLearning] = useState(false);
+  const inputLearningRef = useRef(false);
+  const inputLearnTimerRef = useRef(null);
+  const LEARN_PULSE_NOTE = 60; // C4
+  const LEARN_PULSE_VELOCITY = 100;
+  const LEARN_PULSE_MS = 300;
+  const INPUT_LEARN_TIMEOUT_MS = 10000;
   const midiOutRef = useRef(null);
   if (midiOutRef.current === null) midiOutRef.current = createMidiPassthrough();
   const lastMidiCellRef = useRef(null);
@@ -90,6 +98,49 @@ function App() {
 
   const [useOctaveMapping, setUseOctaveMapping] = useState(false);
   const midiPlayMode = Boolean(selectedMidiInputId);
+
+  // Selected device objects (descriptor with name/manufacturer) — used for
+  // same-device detection and dropdown disabled-state logic. Web MIDI gives
+  // separate IDs for the input and output sides of the same hardware, so we
+  // identify "same physical device" by name+manufacturer.
+  const selectedInputDevice = useMemo(
+    () => midiInputs.find((i) => i.id === selectedMidiInputId) ?? null,
+    [midiInputs, selectedMidiInputId]
+  );
+  const selectedOutputDevice = useMemo(
+    () => midiOutputs.find((o) => o.id === selectedMidiOutputId) ?? null,
+    [midiOutputs, selectedMidiOutputId]
+  );
+  const sameMidiDevice = isSameMidiDevice(selectedInputDevice, selectedOutputDevice);
+
+  // Auto-resolve same-device configurations. When in & out land on the same
+  // physical MIDI device (e.g. after Input Learn captures the device the
+  // user previously had selected as output), migrate the Output to a
+  // different available device so the conflict disappears. Falls back to
+  // channel-bumping only if no alternative output device exists. Uses
+  // useLayoutEffect so the correction lands *before* paint — no window for
+  // the user to interact with a conflicting state.
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  useLayoutEffect(() => {
+    if (!sameMidiDevice) return;
+
+    // Prefer device migration over channel bumping. Honour the user's input
+    // (the recently chosen / learned device) and reassign the output.
+    const altOutput = findAlternativeOutput(midiOutputs, selectedInputDevice);
+    if (altOutput && altOutput.id !== selectedMidiOutputId) {
+      console.warn(`Same MIDI device on in & out — switching Output to "${altOutput.name}" to avoid feedback.`);
+      setSelectedMidiOutputId(altOutput.id);
+      return;
+    }
+
+    // No alternative output device available — fall back to bumping the
+    // output channel so the configuration is at least channel-distinct.
+    if (midiInChannel === midiOutChannel) {
+      const fallback = nextChannel(midiOutChannel);
+      console.warn(`Same MIDI device on in & out can't share ch ${midiOutChannel} — bumping Output to ch ${fallback}.`);
+      setMidiOutChannel(fallback);
+    }
+  }, [sameMidiDevice, midiInChannel, midiOutChannel, selectedInputDevice, midiOutputs, selectedMidiOutputId]);
 
   const chords = useMemo(() => buildChordsForKey(keyCenter), [keyCenter]);
 
@@ -293,10 +344,35 @@ function App() {
     async function connect() {
       try {
         setMidiStatus("requesting");
+        console.log("MIDI ACCESS → requesting…");
         const access = await navigator.requestMIDIAccess();
         if (cancelled) return;
         midiAccessRef.current = access;
         setMidiStatus("disconnected");
+        console.log("MIDI ACCESS → granted");
+
+        // Debounce the device-list log: when a device powers on, every one
+        // of its USB ports fires `onstatechange` in rapid succession. We
+        // collapse the burst into a single line by waiting 250ms after the
+        // last event before logging the final state.
+        let devicesLogTimer = null;
+        let lastLoggedSignature = "";
+        const scheduleDevicesLog = (inputs, outputs) => {
+          if (devicesLogTimer) clearTimeout(devicesLogTimer);
+          devicesLogTimer = setTimeout(() => {
+            const sig = JSON.stringify({
+              i: inputs.map((d) => d.name),
+              o: outputs.map((d) => d.name),
+            });
+            if (sig === lastLoggedSignature) return;
+            lastLoggedSignature = sig;
+            console.log(
+              "MIDI DEVICES →",
+              `${inputs.length} in / ${outputs.length} out`,
+              { inputs: inputs.map((d) => d.name), outputs: outputs.map((d) => d.name) }
+            );
+          }, 250);
+        };
 
         const refreshDevices = () => {
           const nextInputs = Array.from(access.inputs.values()).map((input) => ({
@@ -309,16 +385,24 @@ function App() {
             name: output.name || "MIDI output",
             manufacturer: output.manufacturer || ""
           }));
+          scheduleDevicesLog(nextInputs, nextOutputs);
           setMidiInputs(nextInputs);
           setMidiOutputs(nextOutputs);
           setMidiStatus(nextInputs.length > 0 || nextOutputs.length > 0 ? "connected" : "disconnected");
+
+          // Coordinate input/output defaults: pick first input, then pick the
+          // first output whose name+manufacturer differs from that input so
+          // we don't auto-select a same-device feedback configuration.
+          let chosenInputDevice = null;
           setSelectedMidiInputId((currentId) => {
-            if (currentId && nextInputs.some((i) => i.id === currentId)) return currentId;
-            return nextInputs[0]?.id ?? "";
+            const kept = currentId && nextInputs.find((i) => i.id === currentId);
+            chosenInputDevice = kept ?? nextInputs[0] ?? null;
+            return chosenInputDevice?.id ?? "";
           });
           setSelectedMidiOutputId((currentId) => {
             if (currentId && nextOutputs.some((o) => o.id === currentId)) return currentId;
-            return "";
+            const nonConflict = findAlternativeOutput(nextOutputs, chosenInputDevice);
+            return (nonConflict ?? nextOutputs[0])?.id ?? "";
           });
         };
 
@@ -326,6 +410,7 @@ function App() {
         access.onstatechange = refreshDevices;
       } catch (err) {
         if (cancelled) return;
+        console.warn("MIDI ACCESS → denied or unavailable:", err);
         setMidiStatus("error");
         setFeedback({
           type: "bad",
@@ -347,32 +432,77 @@ function App() {
     const access = midiAccessRef.current;
     if (!access) return;
 
-    const input = selectedMidiInputId ? access.inputs.get(selectedMidiInputId) : null;
-    if (!input) return;
+    // While Input Learn is armed, listen on every connected input so we can
+    // capture both the device and the channel from the first message. When
+    // not learning, only the user-selected input gets a handler.
+    const inputs = inputLearning
+      ? Array.from(access.inputs.values())
+      : (selectedMidiInputId ? [access.inputs.get(selectedMidiInputId)].filter(Boolean) : []);
+    if (inputs.length === 0) return;
 
     const onMessage = (event) => {
+      const input = event?.target;
       const data = event?.data;
       if (!data || data.length === 0) return;
       const statusByte = data[0];
       const op = statusByte & 0xf0;
       const isChannelVoice = statusByte >= 0x80 && statusByte < 0xf0;
 
+      // Skip noisy clock ticks (0xF8) and active-sensing (0xFE) — they fire constantly.
+      if (statusByte !== 0xf8 && statusByte !== 0xfe) {
+        const data1 = data.length >= 2 ? data[1] : 0;
+        const inCh = isChannelVoice ? (statusByte & 0x0f) + 1 : null;
+        const label = inCh != null ? `ch ${inCh}` : "(system)";
+        if (isForwardableMessage(statusByte, data1)) {
+          console.log("MIDI IN →", input?.name, label, [...data]);
+        } else {
+          // Dropped by the whitelist (e.g. Deluge parameter dumps). Visible in
+          // DevTools when the "Verbose" level is enabled — otherwise hidden.
+          console.debug("MIDI IN (filtered) →", input?.name, label, [...data]);
+        }
+      }
+
+      // MIDI Input Learn: capture both device and channel from the first
+      // channel-voice message we see (could be from any connected input).
+      if (inputLearningRef.current && isChannelVoice) {
+        const learnedCh = (statusByte & 0x0f) + 1;
+        const learnedDeviceId = input?.id ?? null;
+        console.log("MIDI INPUT LEARN → captured", input?.name ?? "(unknown)", "ch", learnedCh);
+        if (learnedDeviceId) setSelectedMidiInputId(learnedDeviceId);
+        setMidiInChannel(learnedCh);
+        stopInputLearn(true);
+        return;
+      }
+
       // Channel filter (channel-voice messages only). System messages bypass.
-      if (isChannelVoice && midiInChannel !== 0) {
+      if (isChannelVoice) {
         const inChannel = (statusByte & 0x0f) + 1;
         if (inChannel !== midiInChannel) return;
       }
 
-      // True passthrough: forward raw bytes (with channel rewrite) to the output,
-      // unless doing so would create a feedback loop on the same device.
-      if (selectedMidiOutputId && shouldForward({
-        sameDevice: selectedMidiInputId === selectedMidiOutputId,
-        isChannelVoice,
-        inFilterChannel: midiInChannel,
-        outChannel: midiOutChannel,
-      })) {
+      // Forwarding has two layers: (1) a per-message-type whitelist so we
+      // don't pass synth-state dumps and other non-performance chatter to the
+      // destination, and (2) the same-device loop guard. Both must pass.
+      const data1 = data.length >= 2 ? data[1] : 0;
+      if (
+        selectedMidiOutputId &&
+        isForwardableMessage(statusByte, data1) &&
+        shouldForward({
+          sameDevice: sameMidiDevice,
+          isChannelVoice,
+          inFilterChannel: midiInChannel,
+          outChannel: midiOutChannel,
+        })
+      ) {
         const out = midiAccessRef.current?.outputs.get(selectedMidiOutputId);
-        if (out) midiOutRef.current.forward(out, data, midiOutChannel);
+        if (out) {
+          // Compute the actual bytes that will leave (channel rewritten for
+          // channel-voice messages) so the log reflects what hits the wire.
+          const sentBytes = [...data];
+          if (isChannelVoice) sentBytes[0] = (statusByte & 0xf0) | ((midiOutChannel - 1) & 0x0f);
+          midiOutRef.current.forward(out, data, midiOutChannel);
+          console.log("MIDI OUT →", out.name, "ch", midiOutChannel, sentBytes);
+        }
       }
 
       // UI sync: only note-on/note-off drive cell selection.
@@ -388,12 +518,93 @@ function App() {
     };
 
     midiHandlerRef.current = onMessage;
-    input.onmidimessage = onMessage;
+    for (const input of inputs) {
+      input.onmidimessage = onMessage;
+    }
 
     return () => {
-      if (input.onmidimessage === onMessage) input.onmidimessage = null;
+      for (const input of inputs) {
+        if (input.onmidimessage === onMessage) input.onmidimessage = null;
+      }
     };
-  }, [midiStatus, selectedMidiInputId, midiInChannel, selectedMidiOutputId, midiOutChannel]);
+  }, [midiStatus, selectedMidiInputId, midiInChannel, selectedMidiOutputId, midiOutChannel, sameMidiDevice, inputLearning]);
+
+  // When the input device or channel changes mid-play, any note-off events for
+  // currently-held notes will be filtered out (different channel) or routed to
+  // a port we're no longer listening to. Explicitly release held notes — both
+  // the UI selection state and any external synth those notes were forwarded to.
+  // eslint-disable-next-line react-hooks/rules-of-hooks
+  useEffect(() => {
+    const heldNotes = Object.keys(midiPressedRef.current).map(Number);
+    // Silent when nothing is held — that's the initial-mount case and any
+    // input switch made when no notes are currently sounding.
+    if (heldNotes.length === 0) return;
+    console.log(
+      "MIDI INPUT changed →",
+      "device:", selectedMidiInputId || "(none)",
+      "channel:", midiInChannel,
+      "| releasing", heldNotes.length, "held note(s):", heldNotes
+    );
+    for (const note of heldNotes) {
+      midiNoteOffRef.current?.(note);
+    }
+    if (selectedMidiOutputId) {
+      const out = midiAccessRef.current?.outputs.get(selectedMidiOutputId);
+      if (out) {
+        const flushed = midiOutRef.current.flush(out, midiOutChannel);
+        if (flushed.length > 0) {
+          console.log("MIDI OUT flushed on input change →", out.name, "ch", midiOutChannel, flushed);
+        }
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- intentionally only on input change
+  }, [selectedMidiInputId, midiInChannel]);
+
+  // ── MIDI Learn helpers ───────────────────────────────────────────────────
+  // Output Learn: click once → send a brief note pulse on the configured
+  // output channel so a destination synth in MIDI-learn mode can bind it.
+  // Input Learn: click once → arm the input handler to capture the device
+  // and channel of the next incoming channel-voice message. Auto-cancels.
+
+  function pulseOutputLearn() {
+    if (!selectedMidiOutputId) return;
+    // Defensive: refuse to pulse if the state would create a feedback loop
+    // through a same-device routing. The layout-effect guard above should
+    // have already corrected this, but block at the action layer too.
+    if (sameMidiDevice && midiInChannel !== 0 && midiInChannel === midiOutChannel) {
+      console.warn("Refusing Output Learn pulse — same device + same channel as input would feedback loop.");
+      return;
+    }
+    const out = midiAccessRef.current?.outputs.get(selectedMidiOutputId);
+    if (!out) return;
+    const onStatus = 0x90 | ((midiOutChannel - 1) & 0x0f);
+    const offStatus = 0x80 | ((midiOutChannel - 1) & 0x0f);
+    out.send([onStatus, LEARN_PULSE_NOTE, LEARN_PULSE_VELOCITY]);
+    console.log("MIDI LEARN PULSE → on", out.name, "ch", midiOutChannel, [onStatus, LEARN_PULSE_NOTE, LEARN_PULSE_VELOCITY]);
+    setTimeout(() => {
+      out.send([offStatus, LEARN_PULSE_NOTE, 0]);
+      console.log("MIDI LEARN PULSE → off", out.name, "ch", midiOutChannel, [offStatus, LEARN_PULSE_NOTE, 0]);
+    }, LEARN_PULSE_MS);
+  }
+
+  function startInputLearn() {
+    if (midiInputs.length === 0) return;
+    inputLearningRef.current = true;
+    setInputLearning(true);
+    if (inputLearnTimerRef.current) clearTimeout(inputLearnTimerRef.current);
+    inputLearnTimerRef.current = setTimeout(() => stopInputLearn(false), INPUT_LEARN_TIMEOUT_MS);
+    console.log("MIDI INPUT LEARN → listening on all inputs for next channel-voice message…");
+  }
+
+  function stopInputLearn(captured) {
+    inputLearningRef.current = false;
+    setInputLearning(false);
+    if (inputLearnTimerRef.current) {
+      clearTimeout(inputLearnTimerRef.current);
+      inputLearnTimerRef.current = null;
+    }
+    if (!captured) console.log("MIDI INPUT LEARN → cancelled / timed out");
+  }
 
 
   function checkStage() {
@@ -894,11 +1105,15 @@ function App() {
                 ) : (
                   <>
                     <option value="">— None —</option>
-                    {midiInputs.map((input) => (
-                      <option key={input.id} value={input.id}>
-                        {input.manufacturer ? `${input.manufacturer} — ` : ""}{input.name}
-                      </option>
-                    ))}
+                    {midiInputs.map((input) => {
+                      const conflicts = isSameMidiDevice(input, selectedOutputDevice);
+                      return (
+                        <option key={input.id} value={input.id} disabled={conflicts}>
+                          {input.manufacturer ? `${input.manufacturer} — ` : ""}{input.name}
+                          {conflicts ? " (in use as output)" : ""}
+                        </option>
+                      );
+                    })}
                   </>
                 )}
               </select>
@@ -910,12 +1125,20 @@ function App() {
                 onChange={(e) => setMidiInChannel(Number(e.target.value))}
                 disabled={!selectedMidiInputId}
               >
-                <option value={0}>All</option>
                 {Array.from({ length: 16 }, (_, i) => i + 1).map((ch) => (
                   <option key={ch} value={ch}>{ch}</option>
                 ))}
               </select>
             </label>
+            <button
+              type="button"
+              className={`learn-button${inputLearning ? " active" : ""}`}
+              disabled={midiInputs.length === 0}
+              onClick={() => (inputLearning ? stopInputLearn(false) : startInputLearn())}
+              title="Press a note on any connected MIDI controller — IsoFlow will set both the input device and channel from it."
+            >
+              {inputLearning ? "…" : "Learn"}
+            </button>
           </div>
 
           <div className="drawer-row">
@@ -933,11 +1156,15 @@ function App() {
                 ) : (
                   <>
                     <option value="">— None —</option>
-                    {midiOutputs.map((output) => (
-                      <option key={output.id} value={output.id}>
-                        {output.manufacturer ? `${output.manufacturer} — ` : ""}{output.name}
-                      </option>
-                    ))}
+                    {midiOutputs.map((output) => {
+                      const conflicts = isSameMidiDevice(output, selectedInputDevice);
+                      return (
+                        <option key={output.id} value={output.id} disabled={conflicts}>
+                          {output.manufacturer ? `${output.manufacturer} — ` : ""}{output.name}
+                          {conflicts ? " (in use as input)" : ""}
+                        </option>
+                      );
+                    })}
                   </>
                 )}
               </select>
@@ -949,11 +1176,22 @@ function App() {
                 onChange={(e) => setMidiOutChannel(Number(e.target.value))}
                 disabled={!selectedMidiOutputId}
               >
-                {Array.from({ length: 16 }, (_, i) => i + 1).map((ch) => (
-                  <option key={ch} value={ch}>{ch}</option>
-                ))}
+                {Array.from({ length: 16 }, (_, i) => i + 1)
+                  .filter((ch) => !(sameMidiDevice && ch === midiInChannel))
+                  .map((ch) => (
+                    <option key={ch} value={ch}>{ch}</option>
+                  ))}
               </select>
             </label>
+            <button
+              type="button"
+              className="learn-button"
+              disabled={!selectedMidiOutputId}
+              onClick={pulseOutputLearn}
+              title="Sends a brief note pulse on the configured output channel so a destination synth in MIDI-learn mode can bind it."
+            >
+              Learn
+            </button>
           </div>
         </div>
       </SettingsDrawer>

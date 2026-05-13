@@ -6,6 +6,7 @@ import {
   buildNoteOff,
   createMidiPassthrough,
   shouldForward,
+  isForwardableMessage,
 } from "../midiOutput";
 
 function makeOutputStub() {
@@ -324,5 +325,86 @@ describe("createMidiPassthrough.flush", () => {
 
     expect(flushed).toEqual([]);
     expect(out.sent).toEqual([]);
+  });
+});
+
+// ── isForwardableMessage (performance-only whitelist) ───────────────────────
+
+describe("isForwardableMessage", () => {
+  it("allows Note On (status 0x90..0x9F) regardless of channel", () => {
+    expect(isForwardableMessage(0x90, 60)).toBe(true);
+    expect(isForwardableMessage(0x9f, 60)).toBe(true);
+  });
+
+  it("allows Note Off (status 0x80..0x8F)", () => {
+    expect(isForwardableMessage(0x80, 60)).toBe(true);
+    expect(isForwardableMessage(0x8f, 60)).toBe(true);
+  });
+
+  it("allows Pitch Bend (0xE0..0xEF)", () => {
+    expect(isForwardableMessage(0xe0, 0)).toBe(true);
+    expect(isForwardableMessage(0xef, 64)).toBe(true);
+  });
+
+  it("allows Channel Pressure (0xD0..0xDF)", () => {
+    expect(isForwardableMessage(0xd0, 90)).toBe(true);
+    expect(isForwardableMessage(0xdf, 12)).toBe(true);
+  });
+
+  it("allows CC #64 (sustain pedal) only", () => {
+    expect(isForwardableMessage(0xb0, 64)).toBe(true);
+    expect(isForwardableMessage(0xbf, 64)).toBe(true);
+  });
+
+  it("blocks all other CCs (the Deluge parameter-dump chatter)", () => {
+    // CC numbers seen in the Deluge state dump: 3, 5, 7, 10, 12, 13, …
+    expect(isForwardableMessage(0xb0, 3)).toBe(false);
+    expect(isForwardableMessage(0xb0, 5)).toBe(false);
+    expect(isForwardableMessage(0xb0, 7)).toBe(false);
+    expect(isForwardableMessage(0xb0, 1)).toBe(false);   // mod wheel — also blocked
+    expect(isForwardableMessage(0xb0, 11)).toBe(false);  // expression — also blocked
+    expect(isForwardableMessage(0xb0, 63)).toBe(false);  // adjacent to sustain
+    expect(isForwardableMessage(0xb0, 65)).toBe(false);  // adjacent to sustain
+  });
+
+  it("blocks Program Change (0xC0..0xCF)", () => {
+    expect(isForwardableMessage(0xc0, 42)).toBe(false);
+    expect(isForwardableMessage(0xcf, 0)).toBe(false);
+  });
+
+  it("blocks Poly Aftertouch (0xA0..0xAF)", () => {
+    expect(isForwardableMessage(0xa0, 60)).toBe(false);
+  });
+
+  it("allows System messages (status 0xF0+) — clock, sysex, transport", () => {
+    expect(isForwardableMessage(0xf0, 0)).toBe(true);  // sysex start
+    expect(isForwardableMessage(0xf8, 0)).toBe(true);  // timing clock
+    expect(isForwardableMessage(0xfa, 0)).toBe(true);  // start
+    expect(isForwardableMessage(0xfe, 0)).toBe(true);  // active sensing
+  });
+
+  it("real-world scenario: Deluge parameter dump is fully blocked", () => {
+    // Sequence pulled from an actual Deluge clip-select state dump.
+    const dump = [
+      [0xb0, 3, 64], [0xb0, 5, 0], [0xb0, 7, 127], [0xb0, 10, 64],
+      [0xb0, 12, 64], [0xb0, 13, 64], [0xb0, 14, 64], [0xb0, 15, 64],
+      [0xb0, 50, 64], [0xb0, 74, 72], [0xb0, 113, 0],
+    ];
+    for (const [status, data1] of dump) {
+      expect(isForwardableMessage(status, data1)).toBe(false);
+    }
+  });
+
+  it("real-world scenario: a held note with sustain pedal flows through", () => {
+    // Press: note-on. Pedal down. Release key. Pedal up.
+    const stream = [
+      [0x90, 60, 100, "note-on"],
+      [0xb0, 64, 127, "sustain on"],
+      [0x80, 60, 0, "note-off"],
+      [0xb0, 64, 0, "sustain off"],
+    ];
+    for (const [status, data1] of stream) {
+      expect(isForwardableMessage(status, data1)).toBe(true);
+    }
   });
 });
