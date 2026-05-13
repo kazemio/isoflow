@@ -978,8 +978,47 @@ button:disabled {
 }
 
 .drawer-row-channel {
-  width: 92px;
+  width: 64px;
   flex-shrink: 0;
+}
+
+.learn-button {
+  flex-shrink: 0;
+  width: 56px;
+  height: 42px;
+  border-radius: 14px;
+  background: rgba(247, 247, 248, 0.9);
+  border: 1px solid rgba(0, 0, 0, 0.09);
+  color: #1b1b1f;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 100ms, color 100ms, transform 60ms;
+  user-select: none;
+}
+
+.learn-button:hover:not(:disabled) {
+  background: #e8e8ea;
+}
+
+.learn-button:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.learn-button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.learn-button.active {
+  background: #1b1b1f;
+  color: white;
+  animation: learn-pulse 1s ease-in-out infinite;
+}
+
+@keyframes learn-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
 }
 
 @media (max-width: 900px) {
